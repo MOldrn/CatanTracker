@@ -48,7 +48,7 @@
     const text = clean(rawText);
     if (/^(?:the )?game (?:has )?(?:started|begins|starting)/i.test(text)) return { type: "start", text };
     // Match the action after the full player name; names may contain spaces.
-    const match = text.match(/^(.+?)\s+(received|gained|got|built|placed|bought|purchased|spent|discarded|gave|traded|stole|played|rolled|took)\b\s*(.*)$/i);
+    const match = text.match(/^(.+?)\s+(received|gained|got|built|placed|bought|purchased|spent|discarded|gave|traded|stole|played|used|rolled|took)\b\s*(.*)$/i);
     if (!match) return null;
     const [, name, rawAction, tail] = match;
     const player = name.replace(/:$/, "").trim();
@@ -95,12 +95,18 @@
     }
     if (action === "stole") {
       const steal = tail.match(/^(.*?)\s+from\s+(.+?)\.?$/i);
+      if (!steal || /^(?:all (?:other )?players|everyone|everybody)$/i.test(steal[2])) {
+        const result = steal ? steal[1] : tail;
+        const amounts = resources(result), types = Object.keys(amounts);
+        if (types.length === 1) return { ...base, type: "monopoly", resource: types[0], amount: amounts[types[0]] };
+        if (/^(?:0\b|nothing\b|no (?:cards|resources)\b)/i.test(result)) return { ...base, type: "monopoly", resource: resourceName(result), amount: 0 };
+        return result ? { ...base, type: "unknown-all" } : null;
+      }
       return { ...base, type: "steal", victim: steal?.[2], resources: steal ? resources(steal[1]) : {} };
     }
-    if (action === "played") {
+    if (action === "played" || action === "used") {
       if (/road\s*building/i.test(tail)) return { ...base, type: "free-roads" };
-      // The following gain lines handle Year of Plenty. Monopoly needs a future adapter.
-      if (/monopoly/i.test(tail)) return { ...base, type: "unknown-all" };
+      if (/monopoly/i.test(tail)) return { ...base, type: "monopoly-play", resource: resourceName(tail) };
     }
     return null;
   }
@@ -114,6 +120,7 @@
       this.players = new Map(); this.started = false; this.events = 0;
       this.worlds = [[]]; this.maxWorlds = Math.max(1, maxWorlds);
       this.inferenceLimited = false;
+      this.pendingMonopoly = null;
     }
     resolveName(name) {
       if (typeof name !== "string") return name;
@@ -242,13 +249,64 @@
         this.sync();
       }
     }
+    monopoly(name, resource, amount = null) {
+      const actor = this.player(name);
+      const opponents = [...this.players.values()].filter(player => player !== actor);
+      if (!RESOURCES.includes(resource)) {
+        if (amount !== 0) for (const player of this.players.values()) player.incomplete = true;
+        this.sync(); return;
+      }
+      const index = RESOURCES.indexOf(resource);
+      if (this.worlds) {
+        if (amount !== null && opponents.every(player => !player.incomplete)) {
+          const valid = this.worlds.filter(world => opponents.reduce((sum, player) => sum + world[player.index][index], 0) === amount);
+          if (valid.length) this.worlds = valid;
+          else for (const player of opponents) player.incomplete = true;
+        }
+        if (amount === null && opponents.some(player => player.incomplete)) actor.incomplete = true;
+        for (const world of this.worlds) {
+          let stolen = 0;
+          for (const player of opponents) { stolen += world[player.index][index]; world[player.index][index] = 0; }
+          world[actor.index][index] += amount === null ? stolen : amount;
+        }
+        this.replaceWorlds(this.worlds);
+      } else {
+        // The bounded inference fallback no longer knows which unknown cards
+        // each opponent loses. Keep those counts flagged, rather than guessing.
+        let stolen = 0;
+        for (const player of opponents) {
+          stolen += player.resources[resource]; player.resources[resource] = 0;
+          if (player.unknown) player.incomplete = true;
+        }
+        if (amount === null && opponents.some(player => player.incomplete)) actor.incomplete = true;
+        if (amount !== null && amount !== stolen && opponents.every(player => !player.unknown)) {
+          for (const player of opponents) player.incomplete = true;
+        }
+        actor.resources[resource] += amount === null ? stolen : amount;
+        this.sync();
+      }
+    }
+    finishPendingMonopoly() {
+      if (!this.pendingMonopoly) return;
+      const { player, resource } = this.pendingMonopoly;
+      this.pendingMonopoly = null;
+      this.monopoly(player, resource);
+    }
     apply(event) {
       if (!event) return false;
       if (event.type === "start") {
         this.players.clear(); this.worlds = [[]]; this.inferenceLimited = false;
+        this.pendingMonopoly = null;
         this.started = false; this.events = 0; return true;
       }
       event = { ...event, player: this.resolveName(event.player), victim: this.resolveName(event.victim), partner: this.resolveName(event.partner) };
+      if (this.pendingMonopoly && event.type === "gain" && event.player === this.pendingMonopoly.player) {
+        const types = Object.keys(event.resources);
+        if (types.length === 1 && (!this.pendingMonopoly.resource || this.pendingMonopoly.resource === types[0])) {
+          event = { ...event, type: "monopoly", resource: types[0], amount: event.resources[types[0]] };
+        }
+      }
+      if (this.pendingMonopoly && !(event.type === "monopoly" && event.player === this.pendingMonopoly.player)) this.finishPendingMonopoly();
       const player = this.player(event.player);
       switch (event.type) {
         case "roll":
@@ -265,6 +323,13 @@
           break;
         }
         case "free-roads": player.freeRoads = 2; break;
+        case "monopoly-play": this.pendingMonopoly = { player: event.player, resource: event.resource }; break;
+        case "monopoly": {
+          const resource = event.resource || this.pendingMonopoly?.resource;
+          this.pendingMonopoly = null;
+          this.monopoly(event.player, resource, event.amount);
+          break;
+        }
         case "trade":
           this.change(event.player, event.give, -1); this.change(event.player, event.receive, 1);
           if (event.partner) { this.change(event.partner, event.give, 1); this.change(event.partner, event.receive, -1); }

@@ -11,6 +11,14 @@
     return row.querySelector('[class*="messagePart"]') || row;
   }
   function messageText(row) { return api().textFromNode(messageNode(row)).replace(/\s+/g, " ").trim(); }
+  function playerColors(row) {
+    const colors = [];
+    for (const span of messageNode(row).querySelectorAll("span[style]")) {
+      const name = span.textContent.trim(), color = span.style.color;
+      if (name && name.length <= 100 && color && !/^(?:inherit|initial|unset|revert|currentcolor|transparent)$/i.test(color)) colors.push({ name, color });
+    }
+    return colors;
+  }
   function resourceImageUrl(value, base) {
     if (typeof value !== "string" || value.length > 2048) return null;
     let url;
@@ -91,5 +99,5 @@
     }
     return { entries, containers: containers.size, virtualCandidates: virtual.length, mode: virtualFound ? "virtual game feed" : feedParents.size ? "indexed game feed" : named.length ? "named game log" : "no matching game log" };
   }
-  root.CatanTrackLog = { read, messageText, messageNode, resourceImageUrl, diagnosticHtml };
+  root.CatanTrackLog = { read, messageText, messageNode, resourceImageUrl, diagnosticHtml, playerColors };
 })(globalThis);

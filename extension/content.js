@@ -2,10 +2,11 @@
   "use strict";
   if (document.getElementById("catantrack-extension")) return;
   const { RESOURCES, Tracker, parse, resourceName } = globalThis.CatanTrack;
-  const { read: readLog, messageText, resourceImageUrl, diagnosticHtml } = globalThis.CatanTrackLog;
+  const { read: readLog, messageText, resourceImageUrl, diagnosticHtml, playerColors } = globalThis.CatanTrackLog;
   const pageKey = () => location.pathname + location.search + location.hash;
   let tracker = new Tracker(), seen = new Set(), lastPath = pageKey();
   let localPlayer = "", journal = [];
+  let colorsByName = new Map();
   let observedRows = new Map(), captureTruncated = false, firstObservedIndex = null;
   let lastEvent = "Waiting for a game log…", timer, rowCount = 0, baseline = false;
   let logInfo = { entries: [], containers: 0, virtualCandidates: 0, mode: "not scanned" };
@@ -19,10 +20,14 @@
     *{box-sizing:border-box}[hidden]{display:none!important}
     .identity{padding:7px 0}.identity label{display:block;font-size:12px;font-weight:600;margin-bottom:5px}.identity-entry{display:flex;gap:5px}.identity input{flex:1;min-width:0;width:100%;text-align:left;padding:5px 7px;border-color:#57705c}.identity p{margin:5px 0 0}.identity button{white-space:nowrap}.identity-info{display:flex;align-items:center;justify-content:space-between;gap:6px}.identity-info span{overflow-wrap:anywhere}
     .panel{width:340px;max-width:calc(100vw - 24px);background:#172722;box-shadow:0 8px 26px #0005;border:1px solid #456254;border-radius:10px;overflow:hidden}.panel.collapsed{width:174px}
+    .panel{resize:both;overflow:auto;min-width:min(280px,calc(100vw - 24px));min-height:min(140px,calc(100vh - 24px));max-height:calc(100vh - 24px);container-type:inline-size}
+    .panel.collapsed{width:174px!important;height:auto!important;min-width:0;min-height:0;resize:none}
+    header{position:sticky;top:0;z-index:1}
     .mystery{display:inline-block;border:1px solid #967540;border-radius:4px;padding:1px 3px;color:#f1c56c;background:#463c29;white-space:nowrap;font-size:10px}
     header{display:flex;align-items:center;gap:5px;padding:5px 8px;background:#20382d;cursor:move;touch-action:none}header strong{flex:1;font-size:12px}header button{padding:1px;width:25px;height:25px;font-size:15px}
     button{font:inherit;cursor:pointer;border:1px solid #496252;border-radius:5px;background:#283f32;color:#eef5eb;padding:4px 7px}button:hover{background:#3a5542}button:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid #d4e98c;outline-offset:2px}
     .body{padding:4px 8px 6px}p{font-size:10px;color:#b9c9bd;line-height:1.45;margin:6px 0}.status{color:#b4cf92;margin:0 0 3px;font-size:9px}table{border-collapse:collapse;table-layout:fixed;width:100%;font-variant-numeric:tabular-nums}th{color:#b9c9bd;font-size:11px;font-weight:500;height:29px;padding:2px 0}th:first-child{width:25%;text-align:left}th:nth-last-child(-n+2){width:12%}td{height:27px;padding:2px 0;text-align:center;border-top:1px solid #344a3b}td:first-child{text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}td:last-child{font-size:10px}input{font:inherit;color:#eef5eb;text-align:center;width:26px;max-width:100%;background:transparent;border:1px solid transparent;border-radius:4px;padding:2px 0}input:hover{border-color:#57705c}input::-webkit-inner-spin-button{appearance:none}.resource-icon{display:inline-flex;align-items:center;justify-content:center;width:21px;height:24px;font-size:18px;vertical-align:middle}.resource-icon img{width:17px;height:24px;object-fit:contain}.uncertain{color:#f1c56c}.empty{padding:10px 4px;text-align:center;color:#b9c9bd;font-size:11px}.extras{max-height:40vh;overflow:auto;border-top:1px solid #344a3b;margin-top:5px;padding-top:4px}.tools{display:flex;gap:6px;margin-top:7px}.activity{overflow-wrap:anywhere;max-height:42px;overflow:auto}.legend{margin-top:2px}details{font-size:10px;color:#b9c9bd;margin-top:7px}summary{cursor:pointer}.log{max-height:80px;overflow:auto}.log p{margin:4px 0}
+    .body{font-size:clamp(11px,3.5cqi,18px)}.body th{font-size:.9em;height:2.4em}.body td{height:2.25em}.body td:first-child{font-weight:600}.body td:last-child{font-size:.85em}.body input[type=number]{width:2.2em}.mystery{font-size:.85em}.resource-icon{width:1.8em;height:2em;font-size:1em}.resource-icon>span{font-size:1.5em}.resource-icon img{width:1.4em;height:2em}.incomplete-flag{color:#f1c56c}
   `;
   shadow.append(style);
   function el(tag, text, parent, className) {
@@ -80,7 +85,9 @@
   const identityInfo = el("div", undefined, extras, "identity-info");
   const identityName = el("span", undefined, identityInfo);
   const changeUsername = el("button", "Change username", identityInfo); changeUsername.type = "button";
-  el("p", "Drag the header to move. Hover a picture for its resource name. Edit counts to correct them. ? cards have unknown types; purchases can resolve them. ! means missing information. Load before opening placements.", extras, "legend");
+  el("p", "Drag the header to move or the bottom-right corner to resize. Hover a picture for its resource name. Edit counts to correct them. ? cards have unknown types; purchases can resolve them. ! means missing information. Load before opening placements.", extras, "legend");
+  const resetSize = el("button", "Reset panel size", extras);
+  resetSize.addEventListener("click", () => { panel.style.removeProperty("width"); panel.style.removeProperty("height"); keepInViewport(); });
   const activity = el("p", undefined, extras, "activity");
   const tools = el("div", undefined, extras, "tools");
   const reset = el("button", "Clear counts", tools);
@@ -112,7 +119,11 @@
     tbody.replaceChildren();
     for (const player of tracker.players.values()) {
       const row = el("tr", undefined, tbody);
-      const name = el("td", player.name + (player.incomplete ? " !" : ""), row, player.uncertain ? "uncertain" : "");
+      const name = el("td", player.name, row, player.uncertain ? "uncertain" : "");
+      const matches = [...colorsByName].filter(([rawName]) => tracker.resolveName(rawName) === player.name);
+      const color = matches.find(([rawName]) => !/^you$/i.test(rawName))?.[1] || matches[0]?.[1];
+      if (color) name.style.color = color;
+      if (player.incomplete) el("span", " !", name, "incomplete-flag");
       name.title = player.incomplete ? "Missing or unsupported information: these counts may be incomplete." : player.name;
       for (const resource of RESOURCES) {
         const input = el("input", undefined, el("td", undefined, row));
@@ -141,7 +152,7 @@
     history.replaceChildren();
     recent.forEach(text => el("p", text, history));
     diagnosticText.textContent = [
-      "CatanTrack 0.3.3", `Reader: ${logInfo.mode}`, `Local player: ${localPlayer || "not set"}`,
+      "CatanTrack 0.4.0", `Reader: ${logInfo.mode}`, `Local player: ${localPlayer || "not set"}`,
       `Log containers: ${logInfo.containers}; virtual scrollers: ${logInfo.virtualCandidates}; rows: ${rowCount}; events: ${tracker.events}`,
       ...logInfo.entries.slice(-3).map(row => `Message: ${messageText(row)}\nHTML: ${diagnosticHtml(row).slice(0, 2500)}`),
       !rowCount ? "DOM hints: " + [...document.querySelectorAll('[class*="scroll" i], [class*="feed" i], [id*="log" i], [class*="log" i]')].filter(node => node !== host).slice(0, 25).map(node => `${node.tagName.toLowerCase()}#${node.id}.${String(node.className).replace(/\s+/g, ".")}`).join("\n") : ""
@@ -149,7 +160,7 @@
   }
   exportReport.addEventListener("click", () => {
     const report = {
-      version: "0.3.3", exportedAt: new Date().toISOString(), room: location.pathname + location.hash, localPlayer,
+      version: "0.4.0", exportedAt: new Date().toISOString(), room: location.pathname + location.hash, localPlayer,
       coverage: { firstObservedIndex, retainedRows: observedRows.size, captureTruncated, countsCleared: baseline },
       reader: { mode: logInfo.mode, containers: logInfo.containers, visibleRows: rowCount },
       eventsApplied: tracker.events, inferenceLimited: tracker.inferenceLimited,
@@ -207,6 +218,7 @@
     const path = pageKey();
     if (path !== lastPath) {
       lastPath = path; tracker = new Tracker({ localPlayer }); journal = []; seen.clear(); recent.length = 0; baseline = false;
+      colorsByName = new Map();
       observedRows = new Map(); captureTruncated = false; firstObservedIndex = null;
       lastEvent = "New page — rebuilding from available game log.";
     }
@@ -218,6 +230,7 @@
     rowCount = entries.length;
     let changed = previousCount !== rowCount || previousMode !== logInfo.mode;
     for (const row of entries) {
+      for (const { name, color } of playerColors(row)) if (colorsByName.get(name) !== color) { colorsByName.set(name, color); changed = true; }
       const text = messageText(row);
       const occurrence = (occurrences.get(text) || 0) + 1;
       occurrences.set(text, occurrence);
@@ -278,13 +291,22 @@
     const move = e => {
       host.style.right = "auto";
       host.style.left = Math.max(0, Math.min(innerWidth - box.width, e.clientX - offsetX)) + "px";
-      host.style.top = Math.max(0, Math.min(innerHeight - 48, e.clientY - offsetY)) + "px";
+      host.style.top = Math.max(0, Math.min(innerHeight - box.height, e.clientY - offsetY)) + "px";
     };
     header.addEventListener("pointermove", move);
     header.addEventListener("pointerup", () => header.removeEventListener("pointermove", move), { once: true });
     header.addEventListener("pointercancel", () => header.removeEventListener("pointermove", move), { once: true });
   });
+  function keepInViewport() {
+    const box = host.getBoundingClientRect();
+    if (!box.width || !box.height) return;
+    host.style.left = Math.max(0, Math.min(innerWidth - box.width, box.left)) + "px";
+    host.style.top = Math.max(0, Math.min(innerHeight - box.height, box.top)) + "px";
+    host.style.right = "auto";
+  }
   document.body.append(host);
+  if (typeof ResizeObserver === "function") new ResizeObserver(keepInViewport).observe(panel);
+  window.addEventListener("resize", keepInViewport);
   new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["alt", "src", "data-index"] });
   // Navigation and log replacement may happen without an immediate row mutation.
   setInterval(schedule, 2000);

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CatanTrack — Colonist Resources",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "Track visible resource gains and purchases from Colonist's English game log.",
   "content_security_policy": { "extension_pages": "default-src 'self'; object-src 'none'; base-uri 'none';" },
   "content_scripts": [{

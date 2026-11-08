@@ -5,9 +5,10 @@ A Chrome extension that tracks each player's resources on [Colonist.io](https://
 ## Features
 
 - Tracks resource gains, purchases, trades, and discards.
+- Handles Monopoly transfers across all players, using the reported total to narrow down unknown hands.
 - Shows hidden stolen cards as `?` and uses later actions to work out their types.
 - Links `You` in the log to your entered username.
-- Compact, draggable panel with resource icons and editable counts.
+- Resizable, draggable panel with resource icons, game-colored player names, and editable counts.
 
 ## Installation
 
@@ -20,7 +21,7 @@ Use the English game log and start tracking before the opening placements. After
 
 ## Usage
 
-Drag the header to move the tracker, click **−** to collapse it, or **⋯** for controls. Hover resource icons for their names and edit a number to correct a count.
+Drag the header to move the tracker or its bottom-right corner to resize it. Text and icons scale with the width. Click **−** to collapse it, or **⋯** for controls, including **Reset panel size**. Hover resource icons for their names and edit a number to correct a count.
 
 `?` cards have unknown types. `!` marks a hand that may be incomplete. Counts aren't saved across page refreshes, and some game events or modes may not be supported yet.
 

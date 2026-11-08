@@ -80,9 +80,11 @@ test("player names with spaces and HTML-like characters remain literal", () => {
   assert.equal(parse("Waiting for players"), null);
 });
 
-test("Monopoly flags all tracked hands; start event clears old game", () => {
+test("a Monopoly with no result or chosen type flags missing information when play continues", () => {
   const tracker = new Tracker();
   apply(tracker, "Alice got wood", "Bob got brick", "Alice played Monopoly");
+  assert.ok([...tracker.players.values()].every(p => !p.incomplete));
+  apply(tracker, "Bob rolled 6");
   assert.ok([...tracker.players.values()].every(p => p.uncertain));
   apply(tracker, "Game started");
   assert.equal(tracker.players.size, 0);
@@ -566,5 +568,142 @@ test("debug export includes unrecognized rows, original markup, events, and coun
     assert.equal(report.rows[7].parsed.type, "trade");
     assert.equal(report.players.find(p => p.name === "Mercy").totalMax, 2);
     assert.equal(report.journal.length, 9);
+  } finally { dom.window.close(); }
+});
+
+test("Monopoly clears the chosen resource from every opponent and conserves cards", () => {
+  const tracker = new Tracker();
+  apply(tracker, "Alice got wood ore", "Bob got 2 wood brick", "Cara got 3 wood wheat", "Dave got sheep");
+  const total = () => [...tracker.players.values()].reduce((sum, p) => sum + p.totalMax, 0);
+  const before = total();
+  apply(tracker, "Alice played Monopoly");
+  assert.equal(tracker.player("Alice").resources.wood, 1);
+  apply(tracker, "Alice stole 5 wood");
+  assert.deepEqual(amounts(tracker, "Alice"), [6, 0, 0, 0, 1]);
+  assert.deepEqual(amounts(tracker, "Bob"), [0, 1, 0, 0, 0]);
+  assert.deepEqual(amounts(tracker, "Cara"), [0, 0, 0, 1, 0]);
+  assert.deepEqual(amounts(tracker, "Dave"), [0, 0, 1, 0, 0]);
+  assert.equal(total(), before);
+  assert.equal(tracker.pendingMonopoly, null);
+  assert.ok([...tracker.players.values()].every(p => !p.incomplete));
+});
+
+test("a Monopoly result works even when its play line was not captured", () => {
+  const tracker = new Tracker();
+  apply(tracker, "Alice got wheat", "Bob got 2 ore brick", "Cara got ore", "Alice stole ore ore ore");
+  assert.deepEqual(amounts(tracker, "Alice"), [0, 0, 0, 1, 3]);
+  assert.deepEqual(amounts(tracker, "Bob"), [0, 1, 0, 0, 0]);
+  assert.equal(tracker.player("Cara").totalMax, 0);
+  assert.equal(tracker.players.size, 3);
+});
+
+test("a reported Monopoly total resolves an earlier hidden steal", () => {
+  const tracker = new Tracker();
+  apply(tracker, "Bob got wood ore", "Alice stole 1 card from Bob", "Alice played Monopoly", "Alice stole wood");
+  // Bob must still have had the wood, so Alice's earlier mystery was ore.
+  assert.deepEqual(amounts(tracker, "Alice"), [1, 0, 0, 0, 1]);
+  assert.equal(tracker.player("Alice").unknown, 0);
+  assert.equal(tracker.player("Bob").totalMax, 0);
+  assert.ok([...tracker.players.values()].every(p => !p.incomplete));
+});
+
+test("a zero-card Monopoly with a selected type also constrains unknown hands", () => {
+  const tracker = new Tracker();
+  apply(tracker, "Bob got wood ore", "Alice stole 1 card from Bob", "Alice played Monopoly wood", "Alice stole 0");
+  assert.deepEqual(amounts(tracker, "Alice"), [1, 0, 0, 0, 0]);
+  assert.deepEqual(amounts(tracker, "Bob"), [0, 0, 0, 0, 1]);
+  assert.equal(tracker.player("Alice").unknown, 0);
+  assert.equal(tracker.player("Bob").incomplete, false);
+});
+
+test("an untyped zero-card result makes no transfers or invented uncertainty", () => {
+  const tracker = new Tracker();
+  apply(tracker, "Bob got wood", "Alice played Monopoly", "Alice stole nothing");
+  assert.equal(tracker.player("Alice").totalMax, 0);
+  assert.equal(tracker.player("Bob").resources.wood, 1);
+  assert.ok([...tracker.players.values()].every(p => !p.incomplete));
+});
+
+test("Monopoly results received as a gain are not added twice", () => {
+  const tracker = new Tracker();
+  apply(tracker, "Alice got ore", "Bob got 2 wheat", "Alice used Monopoly wheat", "Alice received 2 wheat");
+  assert.deepEqual(amounts(tracker, "Alice"), [0, 0, 0, 2, 1]);
+  assert.equal(tracker.player("Bob").totalMax, 0);
+  assert.equal(tracker.player("Alice").incomplete, false);
+});
+
+test("a named Monopoly selection can settle without a separate result line", () => {
+  const tracker = new Tracker();
+  apply(tracker, "Bob got 2 ore", "Alice played Monopoly ore", "Alice got wheat");
+  assert.deepEqual(amounts(tracker, "Alice"), [0, 0, 0, 1, 2]);
+  assert.equal(tracker.player("Bob").resources.ore, 0);
+  assert.ok([...tracker.players.values()].every(p => !p.incomplete));
+});
+
+test("reported Monopoly totals remain authoritative if earlier opponent information was missing", () => {
+  const tracker = new Tracker();
+  apply(tracker, "Bob got wood", "Alice played Monopoly", "Alice stole 3 wood");
+  assert.equal(tracker.player("Alice").resources.wood, 3);
+  assert.equal(tracker.player("Bob").resources.wood, 0);
+  assert.equal(tracker.player("Bob").incomplete, true);
+});
+
+test("Monopoly still moves known resources after the scenario budget is exceeded", () => {
+  const tracker = new Tracker({ maxWorlds: 1 });
+  apply(tracker, "Bob got wood ore 2 wheat", "Alice stole 1 card from Bob", "Alice played Monopoly", "Alice stole 2 wheat");
+  assert.equal(tracker.inferenceLimited, true);
+  assert.equal(tracker.player("Alice").resources.wheat, 2);
+  assert.equal(tracker.player("Bob").resources.wheat, 0);
+  assert.equal(tracker.player("Bob").incomplete, true);
+});
+
+test("Monopoly actor aliases share the named player's existing hand", () => {
+  const tracker = new Tracker({ localPlayer: "Dalila7782" });
+  apply(tracker, "Dalila7782 got wood", "Bob got ore", "You played Monopoly", "You stole ore from everyone");
+  assert.deepEqual(amounts(tracker, "Dalila7782"), [1, 0, 0, 0, 1]);
+  assert.equal(tracker.players.size, 2);
+  assert.equal(tracker.player("Bob").totalMax, 0);
+});
+
+test("DOM Monopoly rows update all hands once and keep names in their game colors", async () => {
+  const dom = browser('<div id="game-log-text"><div data-index="0"><span class="messagePart-fixture"><span style="font-weight:600;color:#CF4449">Alice</span> got <img alt="Lumber"></span></div><div data-index="1"><span class="messagePart-fixture"><span style="font-weight:600;color:#228103">Bob</span> got <img alt="Grain"><img alt="Grain"></span></div><div data-index="2"><span class="messagePart-fixture"><span style="font-weight:600;color:#CF4449">Alice</span> played <img alt="Monopoly"></span></div><div data-index="3"><span class="messagePart-fixture">You stole <img alt="Grain"><img alt="Grain"></span></div></div>');
+  try {
+    const doc = dom.window.document, shadow = doc.querySelector("#catantrack-extension").shadowRoot;
+    const cells = () => [...shadow.querySelectorAll("tbody tr")].map(row => row.firstElementChild);
+    assert.equal(cells()[0].style.color, "rgb(207, 68, 73)");
+    assert.equal(cells()[1].style.color, "rgb(34, 129, 3)");
+    assert.equal(shadow.querySelector('input[aria-label="Alice wheat"]').value, "2");
+    assert.equal(shadow.querySelector('input[aria-label="Bob wheat"]').value, "0");
+    const log = doc.querySelector("#game-log-text");
+    const last = log.lastElementChild.cloneNode(true);
+    log.replaceChildren(last); await delay();
+    assert.equal(cells()[0].style.color, "rgb(207, 68, 73)");
+    assert.equal(cells()[1].style.color, "rgb(34, 129, 3)");
+    assert.equal(shadow.querySelector('input[aria-label="Alice wheat"]').value, "2");
+    [...shadow.querySelectorAll("button")].find(b => b.textContent === "Change username").click();
+    shadow.querySelector("#colonist-username").value = "ALICE";
+    shadow.querySelector("form").dispatchEvent(new dom.window.Event("submit", { cancelable: true }));
+    assert.equal(cells()[0].style.color, "rgb(207, 68, 73)");
+    assert.equal(shadow.querySelector('input[aria-label="ALICE wheat"]').value, "2");
+  } finally { dom.window.close(); }
+});
+
+test("resized panel dimensions survive collapse and reset without changing counts", () => {
+  const dom = browser('<div id="game-log-text"><div>Alice got wood</div></div>');
+  try {
+    const host = dom.window.document.querySelector("#catantrack-extension"), shadow = host.shadowRoot;
+    const panel = shadow.querySelector(".panel");
+    panel.style.width = "500px"; panel.style.height = "350px";
+    const collapse = shadow.querySelector("header button"); collapse.click();
+    assert.ok(panel.classList.contains("collapsed"));
+    collapse.click();
+    assert.equal(panel.style.width, "500px"); assert.equal(panel.style.height, "350px");
+    host.getBoundingClientRect = () => ({ left: 900, top: 700, width: 500, height: 350 });
+    dom.window.dispatchEvent(new dom.window.Event("resize"));
+    assert.equal(host.style.left, `${dom.window.innerWidth - 500}px`);
+    assert.equal(host.style.top, `${dom.window.innerHeight - 350}px`);
+    [...shadow.querySelectorAll("button")].find(b => b.textContent === "Reset panel size").click();
+    assert.equal(panel.style.width, ""); assert.equal(panel.style.height, "");
+    assert.equal(shadow.querySelector('input[aria-label="Alice wood"]').value, "1");
   } finally { dom.window.close(); }
 });
