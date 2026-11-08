@@ -1,0 +1,12 @@
+node_modules/
+*.zip
+catantrack-debug*.json
+.env
+.env.*
+!.env.example
+.npmrc
+*.pem
+*.key
+.aws/
+.codex/
+.agents/
