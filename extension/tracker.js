@@ -25,8 +25,6 @@
       const label = [node.getAttribute("alt"), node.getAttribute("title"), node.getAttribute("src")].filter(Boolean).join(" ");
       const resource = resourceName(label);
       if (resource) return ` ${resource} `;
-      const die = label.match(/(?:^|[^a-z])(?:dice|die)(?:[_ -]*(?:red|white|yellow|blue|green|black|face|icon))*[_ -]*([1-6])(?:$|[^0-9])/i);
-      if (die) return ` dice ${die[1]} `;
       const item = label.match(/road[ _-]*building|year[ _-]*of[ _-]*plenty|development[ _-]*card|settlement|city|road|monopoly|knight|card[ _-]*back/i);
       return item ? ` ${item[0].replace(/[_-]/g, " ").toLowerCase()} ` : ` ${node.getAttribute("alt") || ""} `;
     }
@@ -56,15 +54,7 @@
     const player = name.replace(/:$/, "").trim();
     const action = rawAction.toLowerCase();
     const base = { player, text };
-    if (action === "rolled") {
-      const dice = [...tail.matchAll(/\b(?:dice|die)[_ -]*([1-6])\b/gi)].map(match => Number(match[1]));
-      if (dice.length === 2) return { ...base, type: "roll", sum: dice[0] + dice[1], dice };
-      if (dice.length) return { ...base, type: "roll", sum: null };
-      const pair = tail.match(/^([1-6])\s*(?:\+|and|,)\s*([1-6])\.?$/i);
-      if (pair) return { ...base, type: "roll", sum: Number(pair[1]) + Number(pair[2]), dice: [Number(pair[1]), Number(pair[2])] };
-      const total = tail.match(/^(?:a\s+)?(1[0-2]|[2-9])\.?$/i);
-      return { ...base, type: "roll", sum: total ? Number(total[1]) : null };
-    }
+    if (action === "rolled") return { ...base, type: "roll" };
     if (["got", "received", "gained", "took"].includes(action)) {
       const gain = resources(tail);
       if (Object.keys(gain).length) return { ...base, type: "gain", resources: gain };
@@ -124,34 +114,6 @@
   // linked, so evidence about either player can resolve the other player's hand.
   const emptyHand = () => RESOURCES.map(() => 0);
   const copyWorld = world => world.map(hand => hand.slice());
-  class DiceStats {
-    constructor() {
-      this.counts = Object.fromEntries(Array.from({ length: 11 }, (_, i) => [i + 2, 0]));
-      this.total = 0; this.unreadable = 0; this.rolls = new Map();
-    }
-    record(id, sum) {
-      sum = Number.isInteger(sum) && sum >= 2 && sum <= 12 ? sum : null;
-      const key = id ?? Symbol("roll");
-      if (this.rolls.has(key)) {
-        const previous = this.rolls.get(key);
-        // A recycled/incomplete node must not erase a previously readable roll.
-        if (previous === sum || sum === null) return false;
-        if (previous === null) this.unreadable--;
-        else { this.counts[previous]--; this.total--; }
-      }
-      this.rolls.set(key, sum);
-      if (sum === null) this.unreadable++;
-      else { this.counts[sum]++; this.total++; }
-      return true;
-    }
-    get recent() {
-      const entries = [...this.rolls];
-      if (entries.every(([id]) => typeof id === "string" && /^index:\d+$/.test(id))) entries.sort(([a], [b]) => Number(a.slice(6)) - Number(b.slice(6)));
-      return entries.slice(-12).map(([, sum]) => sum);
-    }
-    get last() { return this.recent.at(-1) ?? null; }
-    toJSON() { return { counts: { ...this.counts }, total: this.total, unreadable: this.unreadable, last: this.last, recent: this.recent }; }
-  }
   class Tracker {
     constructor({ maxWorlds = 2048, localPlayer = "" } = {}) {
       this.localPlayer = clean(localPlayer);
@@ -159,7 +121,6 @@
       this.worlds = [[]]; this.maxWorlds = Math.max(1, maxWorlds);
       this.inferenceLimited = false;
       this.pendingMonopoly = null;
-      this.dice = new DiceStats();
     }
     resolveName(name) {
       if (typeof name !== "string") return name;
@@ -336,7 +297,6 @@
       if (event.type === "start") {
         this.players.clear(); this.worlds = [[]]; this.inferenceLimited = false;
         this.pendingMonopoly = null;
-        this.dice = new DiceStats();
         this.started = false; this.events = 0; return true;
       }
       event = { ...event, player: this.resolveName(event.player), victim: this.resolveName(event.victim), partner: this.resolveName(event.partner) };
@@ -351,7 +311,6 @@
       switch (event.type) {
         case "roll":
           this.started = true;
-          this.dice.record(event.id, event.sum);
           for (const p of this.players.values()) p.freeRoads = 0;
           break;
         case "gain": this.change(event.player, event.resources, 1); break;
@@ -389,7 +348,7 @@
       return true;
     }
   }
-  const api = { RESOURCES, COSTS, DiceStats, Tracker, parse, resources, resourceName, textFromNode };
+  const api = { RESOURCES, COSTS, Tracker, parse, resources, resourceName, textFromNode };
   root.CatanTrack = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(globalThis);

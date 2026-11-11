@@ -1,12 +1,12 @@
 {
   "manifest_version": 3,
   "name": "CatanTrack — Colonist Resources",
-  "version": "0.5.0",
+  "version": "0.4.0",
   "description": "Track visible resource gains and purchases from Colonist's English game log.",
   "content_security_policy": { "extension_pages": "default-src 'self'; object-src 'none'; base-uri 'none';" },
   "content_scripts": [{
     "matches": ["https://colonist.io/*", "https://www.colonist.io/*"],
-    "js": ["tracker.js", "log-reader.js", "dice-chart.js", "content.js"],
+    "js": ["tracker.js", "log-reader.js", "content.js"],
     "run_at": "document_idle"
   }]
 }

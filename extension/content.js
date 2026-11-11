@@ -6,7 +6,6 @@
   const pageKey = () => location.pathname + location.search + location.hash;
   let tracker = new Tracker(), seen = new Set(), lastPath = pageKey();
   let localPlayer = "", journal = [];
-  let activeTab = "resources", rollEvents = new Map();
   let colorsByName = new Map();
   let observedRows = new Map(), captureTruncated = false, firstObservedIndex = null;
   let lastEvent = "Waiting for a game log…", timer, rowCount = 0, baseline = false;
@@ -29,7 +28,6 @@
     button{font:inherit;cursor:pointer;border:1px solid #496252;border-radius:5px;background:#283f32;color:#eef5eb;padding:4px 7px}button:hover{background:#3a5542}button:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid #d4e98c;outline-offset:2px}
     .body{padding:4px 8px 6px}p{font-size:10px;color:#b9c9bd;line-height:1.45;margin:6px 0}.status{color:#b4cf92;margin:0 0 3px;font-size:9px}table{border-collapse:collapse;table-layout:fixed;width:100%;font-variant-numeric:tabular-nums}th{color:#b9c9bd;font-size:11px;font-weight:500;height:29px;padding:2px 0}th:first-child{width:25%;text-align:left}th:nth-last-child(-n+2){width:12%}td{height:27px;padding:2px 0;text-align:center;border-top:1px solid #344a3b}td:first-child{text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}td:last-child{font-size:10px}input{font:inherit;color:#eef5eb;text-align:center;width:26px;max-width:100%;background:transparent;border:1px solid transparent;border-radius:4px;padding:2px 0}input:hover{border-color:#57705c}input::-webkit-inner-spin-button{appearance:none}.resource-icon{display:inline-flex;align-items:center;justify-content:center;width:21px;height:24px;font-size:18px;vertical-align:middle}.resource-icon img{width:17px;height:24px;object-fit:contain}.uncertain{color:#f1c56c}.empty{padding:10px 4px;text-align:center;color:#b9c9bd;font-size:11px}.extras{max-height:40vh;overflow:auto;border-top:1px solid #344a3b;margin-top:5px;padding-top:4px}.tools{display:flex;gap:6px;margin-top:7px}.activity{overflow-wrap:anywhere;max-height:42px;overflow:auto}.legend{margin-top:2px}details{font-size:10px;color:#b9c9bd;margin-top:7px}summary{cursor:pointer}.log{max-height:80px;overflow:auto}.log p{margin:4px 0}
     .body{font-size:clamp(11px,3.5cqi,18px)}.body th{font-size:.9em;height:2.4em}.body td{height:2.25em}.body td:first-child{font-weight:600}.body td:last-child{font-size:.85em}.body input[type=number]{width:2.2em}.mystery{font-size:.85em}.resource-icon{width:1.8em;height:2em;font-size:1em}.resource-icon>span{font-size:1.5em}.resource-icon img{width:1.4em;height:2em}.incomplete-flag{color:#f1c56c}
-    .view-tabs{display:flex;gap:4px;padding:4px 0 6px;border-bottom:1px solid #344a3b;margin-bottom:3px}.view-tabs button{font-size:10px;padding:4px 9px;background:transparent;border-color:transparent;color:#a5b9aa}.view-tabs button:first-child{font-weight:600}.view-tabs button[aria-selected=true]{background:#2c4934;border-color:#58764f;color:#e2f1c8}
   `;
   shadow.append(style);
   function el(tag, text, parent, className) {
@@ -42,7 +40,7 @@
   const panel = el("section", undefined, shadow, "panel");
   panel.setAttribute("aria-label", "CatanTrack resource tracker");
   const header = el("header", undefined, panel);
-  el("strong", "CatanTrack - Moldrn :P", header);
+  el("strong", "CatanTrack", header);
   const collapse = el("button", "−", header); collapse.title = "Collapse tracker";
   collapse.setAttribute("aria-expanded", "true");
   const more = el("button", "⋯", header);
@@ -64,23 +62,7 @@
   const cancelUsername = el("button", "Cancel", identityEntry); cancelUsername.type = "button"; cancelUsername.hidden = true;
   el("p", 'Enter your exact game name so "You" and "you" update your hand.', identityForm);
   const status = el("p", undefined, body, "status");
-  const tabs = el("div", undefined, body, "view-tabs"); tabs.setAttribute("role", "tablist"); tabs.setAttribute("aria-label", "Tracker views");
-  const resourceTab = el("button", "Resources", tabs), diceTab = el("button", "Dice", tabs);
-  const resourceView = el("div", undefined, body); resourceView.id = "resource-view";
-  const dicePanel = el("div", undefined, body); dicePanel.id = "dice-view";
-  const diceView = globalThis.CatanTrackDiceView.create(dicePanel);
-  for (const [button, id, view] of [[resourceTab, "resources", resourceView], [diceTab, "dice", dicePanel]]) {
-    button.type = "button"; button.id = `${id}-tab`; button.setAttribute("role", "tab"); button.setAttribute("aria-controls", view.id);
-    view.setAttribute("role", "tabpanel"); view.setAttribute("aria-labelledby", button.id);
-    button.addEventListener("click", () => { activeTab = id; render(); });
-    button.addEventListener("keydown", event => {
-      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-      event.preventDefault(); event.stopPropagation();
-      const target = event.key === "Home" ? resourceTab : event.key === "End" ? diceTab : button === resourceTab ? diceTab : resourceTab;
-      target.click(); target.focus();
-    });
-  }
-  const table = el("table", undefined, resourceView);
+  const table = el("table", undefined, body);
   const tr = el("tr", undefined, el("thead", undefined, table));
   const icons = new Map();
   const fallbackIcons = { wood: "🌲", brick: "🧱", sheep: "🐑", wheat: "🌾", ore: "🪨" };
@@ -98,7 +80,7 @@
     } else th.textContent = label === "Unknown" ? "?" : label === "Total" ? "Σ" : label;
   }
   const tbody = el("tbody", undefined, table);
-  const empty = el("div", "Start a game with the English game log open.", resourceView, "empty");
+  const empty = el("div", "Start a game with the English game log open.", body, "empty");
   const extras = el("div", undefined, body, "extras"); extras.id = "tracker-controls"; extras.hidden = true;
   const identityInfo = el("div", undefined, extras, "identity-info");
   const identityName = el("span", undefined, identityInfo);
@@ -128,13 +110,6 @@
     status.textContent = rowCount ? tracker.events ? `${tracker.players.size} players · ${tracker.events} events${baseline ? " · counts cleared" : ""}` : `Game log found · ${rowCount} rows · no recognized events yet` : logInfo.containers ? "Game log found · waiting for entries…" : "Game log not found · see ⋯ → Game log diagnostics";
     if (!localPlayer) status.textContent = "Enter your username above to start tracking.";
     table.hidden = !localPlayer;
-    tabs.hidden = !localPlayer;
-    resourceView.hidden = !localPlayer || activeTab !== "resources";
-    dicePanel.hidden = !localPlayer || activeTab !== "dice";
-    resourceTab.setAttribute("aria-selected", String(activeTab === "resources")); resourceTab.tabIndex = activeTab === "resources" ? 0 : -1;
-    diceTab.setAttribute("aria-selected", String(activeTab === "dice")); diceTab.tabIndex = activeTab === "dice" ? 0 : -1;
-    diceTab.textContent = `Dice${tracker.dice.total ? ` · ${tracker.dice.total}` : ""}`;
-    if (activeTab === "dice") diceView.render(tracker.dice);
     identityInfo.hidden = !localPlayer;
     identityName.textContent = localPlayer ? `Playing as ${localPlayer}` : "";
     suggestions.replaceChildren();
@@ -177,7 +152,7 @@
     history.replaceChildren();
     recent.forEach(text => el("p", text, history));
     diagnosticText.textContent = [
-      "CatanTrack 0.5.0", `Reader: ${logInfo.mode}`, `Local player: ${localPlayer || "not set"}`,
+      "CatanTrack 0.4.0", `Reader: ${logInfo.mode}`, `Local player: ${localPlayer || "not set"}`,
       `Log containers: ${logInfo.containers}; virtual scrollers: ${logInfo.virtualCandidates}; rows: ${rowCount}; events: ${tracker.events}`,
       ...logInfo.entries.slice(-3).map(row => `Message: ${messageText(row)}\nHTML: ${diagnosticHtml(row).slice(0, 2500)}`),
       !rowCount ? "DOM hints: " + [...document.querySelectorAll('[class*="scroll" i], [class*="feed" i], [id*="log" i], [class*="log" i]')].filter(node => node !== host).slice(0, 25).map(node => `${node.tagName.toLowerCase()}#${node.id}.${String(node.className).replace(/\s+/g, ".")}`).join("\n") : ""
@@ -185,10 +160,10 @@
   }
   exportReport.addEventListener("click", () => {
     const report = {
-      version: "0.5.0", exportedAt: new Date().toISOString(), room: location.pathname + location.hash, localPlayer,
+      version: "0.4.0", exportedAt: new Date().toISOString(), room: location.pathname + location.hash, localPlayer,
       coverage: { firstObservedIndex, retainedRows: observedRows.size, captureTruncated, countsCleared: baseline },
       reader: { mode: logInfo.mode, containers: logInfo.containers, visibleRows: rowCount },
-      eventsApplied: tracker.events, inferenceLimited: tracker.inferenceLimited, dice: tracker.dice,
+      eventsApplied: tracker.events, inferenceLimited: tracker.inferenceLimited,
       players: [...tracker.players.values()], journal, rows: [...observedRows.values()]
     };
     const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
@@ -198,9 +173,7 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
   function rebuildForUsername() {
-    const dice = tracker.dice;
     tracker = new Tracker({ localPlayer });
-    tracker.dice = dice;
     tracker.started = baseline;
     // Replay original events rather than adding already-clamped duplicate hands.
     // This also restores theft constraints and preserves manual adjustments.
@@ -245,7 +218,6 @@
     const path = pageKey();
     if (path !== lastPath) {
       lastPath = path; tracker = new Tracker({ localPlayer }); journal = []; seen.clear(); recent.length = 0; baseline = false;
-      activeTab = "resources"; rollEvents = new Map();
       colorsByName = new Map();
       observedRows = new Map(); captureTruncated = false; firstObservedIndex = null;
       lastEvent = "New page — rebuilding from available game log.";
@@ -269,22 +241,13 @@
         observedRows.set(key, { key, index, text, html: diagnosticHtml(row), parsed: parse(text) });
         if (observedRows.size > 5000) { observedRows.delete(observedRows.keys().next().value); captureTruncated = true; }
       }
+      if (seen.has(key)) continue;
       const event = parse(text);
-      if (event?.type === "roll") event.id = key;
-      if (seen.has(key)) {
-        if (rollEvents.has(key) && event?.type === "roll" && event.sum !== null && tracker.dice.record(key, event.sum)) {
-          const original = rollEvents.get(key);
-          if (original) Object.assign(original, event);
-          changed = true;
-        }
-        continue;
-      }
       // Leave incomplete/unsupported entries eligible for a later DOM update.
       if (!event) continue;
       seen.add(key);
       if (tracker.apply(event)) {
-        if (event.type === "start") { journal = []; baseline = false; rollEvents = new Map(); activeTab = "resources"; }
-        if (event.type === "roll") rollEvents.set(key, event);
+        if (event.type === "start") { journal = []; baseline = false; }
         journal.push(event);
         changed = true; lastEvent = event.text;
         recent.unshift(event.text); recent.splice(8);
@@ -295,22 +258,12 @@
   }
   function schedule() { if (!timer) timer = setTimeout(scan, 120); }
   reset.addEventListener("click", () => {
-    const dice = tracker.dice;
     tracker = new Tracker({ localPlayer }); journal = []; tracker.started = true; baseline = true; recent.length = 0;
-    tracker.dice = dice;
     lastEvent = "Counts cleared. Tracking future entries only; enter existing hands manually."; render();
   });
   replay.addEventListener("click", () => {
-    const dice = tracker.dice;
-    const previousRolls = rollEvents;
     tracker = new Tracker({ localPlayer }); journal = []; seen.clear(); recent.length = 0; baseline = false;
-    tracker.dice = dice;
     scan();
-    if (tracker.dice !== dice) {
-      for (const [id, sum] of tracker.dice.rolls) dice.record(id, sum);
-      tracker.dice = dice;
-      rollEvents = new Map([...previousRolls, ...rollEvents]);
-    }
     lastEvent = tracker.events ? "Rebuilt from available log. Missing earlier history can make counts incomplete." : "No events read. Expand Game log diagnostics to inspect detection."; render();
   });
   collapse.addEventListener("click", () => {

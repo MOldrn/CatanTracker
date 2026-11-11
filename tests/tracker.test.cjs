@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { JSDOM } = require("jsdom");
-const { Tracker, DiceStats, parse, RESOURCES } = require("../extension/tracker.js");
+const { Tracker, parse, RESOURCES } = require("../extension/tracker.js");
 function apply(tracker, ...lines) { for (const line of lines) tracker.apply(parse(line)); }
 function amounts(tracker, name) { return RESOURCES.map(r => tracker.player(name).resources[r]); }
 
@@ -100,7 +100,7 @@ test("DOM parser reads image alt text and filenames", () => {
 const delay = () => new Promise(resolve => setTimeout(resolve, 200));
 function browser(html, username = "Alice") {
   const dom = new JSDOM(html, { url: "https://colonist.io/#room", runScripts: "outside-only", pretendToBeVisual: true });
-  for (const file of ["tracker.js", "log-reader.js", "dice-chart.js", "content.js"]) dom.window.eval(fs.readFileSync(path.join(__dirname, "../extension", file), "utf8"));
+  for (const file of ["tracker.js", "log-reader.js", "content.js"]) dom.window.eval(fs.readFileSync(path.join(__dirname, "../extension", file), "utf8"));
   if (username !== null) {
     const shadow = dom.window.document.querySelector("#catantrack-extension").shadowRoot;
     shadow.querySelector("#colonist-username").value = username;
@@ -705,158 +705,5 @@ test("resized panel dimensions survive collapse and reset without changing count
     [...shadow.querySelectorAll("button")].find(b => b.textContent === "Reset panel size").click();
     assert.equal(panel.style.width, ""); assert.equal(panel.style.height, "");
     assert.equal(shadow.querySelector('input[aria-label="Alice wood"]').value, "1");
-  } finally { dom.window.close(); }
-});
-
-test("roll parsing reads totals and pairs without guessing incomplete dice", () => {
-  for (let sum = 2; sum <= 12; sum++) assert.equal(parse(`Alice rolled ${sum}`).sum, sum);
-  assert.equal(parse("Alice rolled 3 + 4").sum, 7);
-  assert.equal(parse("Alice rolled dice_3 dice_4").sum, 7);
-  assert.equal(parse("Alice rolled dice_6").sum, null);
-  assert.equal(parse("Alice rolled 13").sum, null);
-  assert.equal(parse("Alice rolled").sum, null);
-});
-
-test("roll parsing reads both icon alt labels and dice asset filenames", () => {
-  const dom = new JSDOM('<div id="a">Alice rolled <img alt="dice_6"><img alt="dice_6"></div><div id="b">Bob rolled <img src="https://cdn.colonist.io/dist/assets/dice_red_2.fixture.svg"><img alt="Dice 5"></div>');
-  try {
-    assert.equal(parse(dom.window.document.querySelector("#a")).sum, 12);
-    assert.equal(parse(dom.window.document.querySelector("#b")).sum, 7);
-  } finally { dom.window.close(); }
-});
-
-test("dice stats deduplicate IDs and upgrade unreadable rolls without inflating totals", () => {
-  const stats = new DiceStats();
-  stats.record("first", null); stats.record("second", 8);
-  assert.equal(stats.unreadable, 1);
-  stats.record("first", 7); stats.record("first", 7); stats.record("first", null);
-  assert.equal(stats.total, 2); assert.equal(stats.unreadable, 0);
-  assert.equal(stats.counts[7], 1); assert.equal(stats.counts[8], 1);
-  assert.equal(stats.last, 8);
-  stats.record("second", 9);
-  assert.equal(stats.total, 2); assert.equal(stats.counts[8], 0); assert.equal(stats.counts[9], 1);
-  assert.deepEqual(JSON.parse(JSON.stringify(stats)).recent, [7, 9]);
-});
-
-test("resource events do not change dice counts and a new game resets them", () => {
-  const tracker = new Tracker();
-  apply(tracker, "Alice rolled 7", "Alice got wood", "Alice rolled 7", "Bob rolled 12");
-  assert.equal(tracker.dice.total, 3); assert.equal(tracker.dice.counts[7], 2);
-  assert.equal(tracker.dice.counts[12], 1);
-  apply(tracker, "Game started");
-  assert.equal(tracker.dice.total, 0); assert.equal(tracker.dice.unreadable, 0);
-});
-
-test("resources remain the default view and the secondary Dice tab renders distribution details", () => {
-  const dom = browser('<div id="game-log-text"><div data-index="0">Alice rolled <img alt="dice_3"><img alt="dice_4"></div><div data-index="1">Alice got wood</div><div data-index="2">Bob rolled 8</div></div>');
-  try {
-    const shadow = dom.window.document.querySelector("#catantrack-extension").shadowRoot;
-    assert.equal(shadow.querySelector("#resources-tab").getAttribute("aria-selected"), "true");
-    assert.equal(shadow.querySelector("#dice-view").hidden, true);
-    shadow.querySelector("#dice-tab").click();
-    assert.equal(shadow.querySelector("#resource-view").hidden, true);
-    assert.equal(shadow.querySelector('[data-dice-stat="total"]').textContent, "2");
-    assert.equal(shadow.querySelector('[data-dice-stat="last"]').textContent, "8");
-    assert.equal(shadow.querySelector('[data-dice-stat="sevens"]').textContent, "1");
-    assert.equal(shadow.querySelectorAll(".dice-column").length, 11);
-    assert.equal(shadow.querySelector('.dice-column[data-sum="7"]').getAttribute("data-count"), "1");
-    assert.match(shadow.querySelector('.dice-column[data-sum="7"] title').textContent, /50.0%/);
-    assert.doesNotMatch(shadow.querySelector(".dice-chart").outerHTML, /NaN|Infinity/);
-    shadow.querySelector("#resources-tab").click();
-    assert.equal(shadow.querySelector('input[aria-label="Alice wood"]').value, "1");
-    assert.equal(shadow.querySelector("#resource-view").hidden, false);
-    shadow.querySelector("#resources-tab").dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
-    assert.equal(shadow.querySelector("#dice-tab").getAttribute("aria-selected"), "true");
-    assert.equal(shadow.activeElement, shadow.querySelector("#dice-tab"));
-  } finally { dom.window.close(); }
-});
-
-test("indexed rerenders count once while two identical rolls with different indices count twice", async () => {
-  const dom = browser('<div id="game-log-text"><div data-index="0">Alice rolled 8</div></div>');
-  try {
-    const doc = dom.window.document, shadow = doc.querySelector("#catantrack-extension").shadowRoot, log = doc.querySelector("#game-log-text");
-    const copy = log.firstElementChild.cloneNode(true); log.replaceChildren(copy); await delay();
-    const second = copy.cloneNode(true); second.dataset.index = "1"; log.append(second); await delay();
-    shadow.querySelector("#dice-tab").click();
-    assert.equal(shadow.querySelector('[data-dice-stat="total"]').textContent, "2");
-    assert.equal(shadow.querySelector('.dice-column[data-sum="8"]').getAttribute("data-count"), "2");
-  } finally { dom.window.close(); }
-});
-
-test("late-loading dice icons fill in a skipped roll and survive username replay", async () => {
-  const dom = browser('<div id="game-log-text"><div data-index="0">Alice rolled <img alt="dice_6"></div></div>');
-  try {
-    const doc = dom.window.document, shadow = doc.querySelector("#catantrack-extension").shadowRoot;
-    shadow.querySelector("#dice-tab").click();
-    assert.equal(shadow.querySelector('[data-dice-stat="total"]').textContent, "0");
-    assert.match(shadow.querySelector(".dice-note").textContent, /1 unreadable roll/);
-    const second = doc.createElement("img"); second.alt = "dice_1";
-    doc.querySelector('[data-index="0"]').append(second); await delay();
-    assert.equal(shadow.querySelector('[data-dice-stat="total"]').textContent, "1");
-    assert.equal(shadow.querySelector('[data-dice-stat="last"]').textContent, "7");
-    assert.doesNotMatch(shadow.querySelector(".dice-note").textContent, /unreadable/);
-    [...shadow.querySelectorAll("button")].find(b => b.textContent === "Change username").click();
-    shadow.querySelector("#colonist-username").value = "ALICE";
-    shadow.querySelector("form").dispatchEvent(new dom.window.Event("submit", { cancelable: true }));
-    assert.equal(shadow.querySelector('[data-dice-stat="total"]').textContent, "1");
-    assert.equal(shadow.querySelector('.dice-column[data-sum="7"]').getAttribute("data-count"), "1");
-  } finally { dom.window.close(); }
-});
-
-test("clearing resources and rereading a partial log preserve previously observed dice history", async () => {
-  const dom = browser('<div id="game-log-text"><div data-index="0">Game started</div><div data-index="1">Alice rolled 7</div><div data-index="2">Alice rolled 8</div><div data-index="3">Alice got wood</div></div>');
-  try {
-    const doc = dom.window.document, shadow = doc.querySelector("#catantrack-extension").shadowRoot, log = doc.querySelector("#game-log-text");
-    [...shadow.querySelectorAll("button")].find(b => b.textContent === "Clear counts").click();
-    assert.equal(shadow.querySelectorAll("tbody tr").length, 0);
-    shadow.querySelector("#dice-tab").click();
-    assert.equal(shadow.querySelector('[data-dice-stat="total"]').textContent, "2");
-    // Simulate scrolling to the beginning: only the start and first roll remain.
-    log.replaceChildren(log.children[0].cloneNode(true), log.children[1].cloneNode(true)); await delay();
-    [...shadow.querySelectorAll("button")].find(b => b.textContent === "Re-read visible log").click();
-    shadow.querySelector("#dice-tab").click();
-    assert.equal(shadow.querySelector('[data-dice-stat="total"]').textContent, "2");
-    assert.equal(shadow.querySelector('.dice-column[data-sum="8"]').getAttribute("data-count"), "1");
-  } finally { dom.window.close(); }
-});
-
-test("a new game discards old dice even if old rows remain in the DOM", async () => {
-  const dom = browser('<div id="game-log-text"><div data-index="0">Alice rolled 7</div></div>');
-  try {
-    const doc = dom.window.document, shadow = doc.querySelector("#catantrack-extension").shadowRoot, log = doc.querySelector("#game-log-text");
-    for (const [index, text] of [[1, "Game started"], [2, "Alice rolled 12"]]) {
-      const row = doc.createElement("div"); row.dataset.index = index; row.textContent = text; log.append(row);
-    }
-    await delay();
-    // Force another scan of the still-present old row.
-    log.firstElementChild.replaceWith(log.firstElementChild.cloneNode(true)); await delay();
-    shadow.querySelector("#dice-tab").click();
-    assert.equal(shadow.querySelector('[data-dice-stat="total"]').textContent, "1");
-    assert.equal(shadow.querySelector('.dice-column[data-sum="7"]').getAttribute("data-count"), "0");
-    assert.equal(shadow.querySelector('.dice-column[data-sum="12"]').getAttribute("data-count"), "1");
-  } finally { dom.window.close(); }
-});
-
-test("scrolling into older indexed rolls does not replace the actual latest roll", () => {
-  const stats = new DiceStats();
-  stats.record("index:100", 8); stats.record("index:120", 9); stats.record("index:20", 3);
-  assert.equal(stats.total, 3);
-  assert.equal(stats.last, 9);
-  assert.deepEqual(stats.recent, [3, 8, 9]);
-});
-
-test("changing rooms resets dice history and returns to the main Resources tab", async () => {
-  const dom = browser('<div id="game-log-text"><div data-index="0">Alice rolled 7</div></div>');
-  try {
-    const doc = dom.window.document, shadow = doc.querySelector("#catantrack-extension").shadowRoot;
-    shadow.querySelector("#dice-tab").click();
-    dom.window.history.pushState({}, "", "/#another-room");
-    const row = doc.createElement("div"); row.dataset.index = "0"; row.textContent = "Alice rolled 8";
-    doc.querySelector("#game-log-text").replaceChildren(row); await delay();
-    assert.equal(shadow.querySelector("#resources-tab").getAttribute("aria-selected"), "true");
-    shadow.querySelector("#dice-tab").click();
-    assert.equal(shadow.querySelector('[data-dice-stat="total"]').textContent, "1");
-    assert.equal(shadow.querySelector('.dice-column[data-sum="7"]').getAttribute("data-count"), "0");
-    assert.equal(shadow.querySelector('.dice-column[data-sum="8"]').getAttribute("data-count"), "1");
   } finally { dom.window.close(); }
 });

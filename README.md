@@ -9,7 +9,6 @@ A Chrome extension that tracks each player's resources on [Colonist.io](https://
 - Shows hidden stolen cards as `?` and uses later actions to work out their types.
 - Links `You` in the log to your entered username.
 - Resizable, draggable panel with resource icons, game-colored player names, and editable counts.
-- Secondary Dice tab with a distribution graph, hover details, recent rolls, and a highlighted count of 7s.
 
 ## Installation
 
@@ -23,8 +22,6 @@ Use the English game log and start tracking before the opening placements. After
 ## Usage
 
 Drag the header to move the tracker or its bottom-right corner to resize it. Text and icons scale with the width. Click **−** to collapse it, or **⋯** for controls, including **Reset panel size**. Hover resource icons for their names and edit a number to correct a count.
-
-**Resources** is the default view. Switch to **Dice** for counts of 2–12, percentages on hover, and a dashed reference for two fair dice. Dice history includes observed rolls only; unreadable rolls are flagged and excluded from the graph. Clearing resource counts keeps dice history. A new game or page refresh resets it.
 
 `?` cards have unknown types. `!` marks a hand that may be incomplete. Counts aren't saved across page refreshes, and some game events or modes may not be supported yet.
 
