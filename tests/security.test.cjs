@@ -7,7 +7,7 @@ const { Tracker, parse, resources, resourceName } = require("../extension/tracke
 
 function browser(html = "") {
   const dom = new JSDOM(html, { url: "https://colonist.io/?private=test-only#room", runScripts: "outside-only" });
-  for (const file of ["tracker.js", "log-reader.js", "content.js"]) {
+  for (const file of ["tracker.js", "log-reader.js", "dice-chart.js", "content.js"]) {
     dom.window.eval(fs.readFileSync(path.join(__dirname, "../extension", file), "utf8"));
   }
   return dom;
