@@ -5,6 +5,7 @@
   const VIRTUAL_LOGS = '[class*="virtualScroller"]';
   const ROWS = '[data-index], [class*="scrollItemContainer"], .message_post, .message-post, .log-message, [data-testid="log-message"]';
   const CHAT = '#chat, #chat-text, [data-testid="chat"], [data-testid="chat-log"], [class*="chatMessage"], [class*="chatFeed"]';
+  const EDITABLE = 'input, textarea, [role="textbox"], [contenteditable]:not([contenteditable="false"])';
   const api = () => root.CatanTrack;
   function messageNode(row) {
     // Avatars, badges and timestamps are outside the message body in the feed.
@@ -47,12 +48,27 @@
   }
   function isChat(row) {
     if (row.closest(CHAT)) return true;
+    // A composer can reuse feed components, or sit inside a selected log row.
+    // Never interpret draft text as an event, even during simultaneous updates.
+    if (row.closest(EDITABLE) || row.querySelector(EDITABLE)) return true;
     // Chat and game logs can share the same virtual-scroller component. Chat
     // prefixes its message with "name:", whereas game actions use "name got".
     const node = messageNode(row);
     const name = node.querySelector('span[style*="font-weight"], [class*="username"], [class*="playerName"]');
-    if (!name) return false;
-    return node.textContent.trimStart().startsWith(name.textContent.trim() + ":");
+    const text = messageText(row);
+    if (name) {
+      const sender = name.textContent.trim();
+      const prefix = text.slice(0, sender.length);
+      if (prefix === sender && /^\s*[:：]/.test(text.slice(sender.length))) return true;
+      // The actor must be the rendered sender, rather than an action word
+      // found later inside that sender's chat message (or their username).
+      const event = api().parse(text);
+      if (event?.player && event.player !== sender) return true;
+    }
+    // Some chat layouts render the author outside messagePart, or without a
+    // styled span. A colon before the action still identifies a chat prefix.
+    const event = api().parse(text);
+    return Boolean(event?.player && /[:：]/.test(event.player));
   }
   function containerRows(container) {
     const candidates = [...container.querySelectorAll(ROWS)];

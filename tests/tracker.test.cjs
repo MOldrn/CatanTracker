@@ -385,6 +385,45 @@ test("an unrelated virtual scroller is not treated as a game log", () => {
   } finally { dom.window.close(); }
 });
 
+test("chat prefixes and mismatched feed senders cannot create players", () => {
+  const row = (index, body) => `<div class="scrollItemContainer-fixture" data-index="${index}"><div class="feedMessage-fixture"><span class="messagePart-fixture">${body}</span></div></div>`;
+  const dom = browser('<div class="virtualScroller-fixture">' + [
+    row(0, '<span style="font-weight:600">Alice</span> got <img alt="Lumber">'),
+    row(1, 'Bob: hello got wood'),
+    row(2, '<span class="username">Bob</span> : hello got wood'),
+    row(3, '<span class="username">Bob</span>：hello got wood'),
+    row(4, '<span class="username">Bob</span><span> hello got wood</span>'),
+    row(5, '<span class="username">Bob</span> hello gave up'),
+    row(6, 'You stole <img alt="Lumber"> from Alice')
+  ].join('') + '</div>', 'Carol');
+  try {
+    const doc = dom.window.document;
+    assert.deepEqual([...dom.window.CatanTrackLog.read(doc).entries].map(row => row.dataset.index), ['0', '6']);
+    const shadow = doc.querySelector('#catantrack-extension').shadowRoot;
+    assert.equal(shadow.querySelectorAll('tbody tr').length, 2);
+    assert.equal(shadow.querySelector('input[aria-label="Alice wood"]').value, '0');
+    assert.equal(shadow.querySelector('input[aria-label="Carol wood"]').value, '1');
+  } finally { dom.window.close(); }
+});
+
+test("typing in feed-like chat inputs while a resource arrives never creates a player", async () => {
+  const dom = browser('<div id="game-log-text"><div data-index="0">Alice got wood</div><div data-index="1" contenteditable="true">Hello got wood</div><div data-index="2"><div role="textbox">Maybe gave up</div></div><div data-index="3"><textarea>Someone got brick</textarea></div></div>');
+  try {
+    const doc = dom.window.document, log = doc.querySelector('#game-log-text');
+    const shadow = doc.querySelector('#catantrack-extension').shadowRoot;
+    const draft = log.querySelector('[contenteditable]');
+    draft.textContent = 'Anyone got sheep';
+    const event = doc.createElement('div');
+    event.dataset.index = '4'; event.textContent = 'Alice got brick';
+    log.append(event);
+    await delay();
+    assert.equal(shadow.querySelectorAll('tbody tr').length, 1);
+    assert.equal(shadow.querySelector('input[aria-label="Alice wood"]').value, '1');
+    assert.equal(shadow.querySelector('input[aria-label="Alice brick"]').value, '1');
+    assert.deepEqual([...dom.window.CatanTrackLog.read(doc).entries].map(row => row.dataset.index), ['0', '4']);
+  } finally { dom.window.close(); }
+});
+
 test("diagnostics distinguish unsupported rows from a missing game log", () => {
   const dom = browser('<div id="game-log-text"><div class="message_post">Unsupported action example</div></div>');
   try {
