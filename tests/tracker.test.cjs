@@ -108,6 +108,79 @@ function savedGames() {
 }
 const trackerShadow = dom => dom.window.document.querySelector('#catantrack-extension').shadowRoot;
 const logRow = (index, text) => `<div data-index="${index}">${text}</div>`;
+const selectView = (shadow, name) => [...shadow.querySelectorAll('.view-switch button')].find(button => button.textContent === name).click();
+
+test("card view groups guaranteed resources and keeps numeric counts when switching", () => {
+  const dom = browser('<div id="game-log-text">' + [
+    'Alice got 2 wood 6 wheat', 'Bob got brick'
+  ].map((text, i) => logRow(i, text)).join('') + '</div>');
+  try {
+    const shadow = trackerShadow(dom);
+    assert.equal(shadow.querySelector('table').hidden, false);
+    selectView(shadow, 'Cards');
+    assert.equal(shadow.querySelector('table').hidden, true);
+    assert.equal(shadow.querySelector('#card-hands').hidden, false);
+    assert.equal(shadow.querySelectorAll('.hand-player').length, 2);
+    assert.equal(shadow.querySelector('[aria-label="2 wood cards"]').querySelectorAll('.hand-card').length, 2);
+    assert.equal(shadow.querySelector('[aria-label="6 wheat cards"]').querySelector('.stack-count').textContent, '6');
+    assert.equal(shadow.querySelector('.hand-total').textContent, '8 cards');
+    selectView(shadow, 'Numeric');
+    assert.equal(shadow.querySelector('input[aria-label="Alice wood"]').value, '2');
+    const count = shadow.querySelector('input[aria-label="Alice wheat"]'); count.value = '4';
+    count.dispatchEvent(new dom.window.Event('change'));
+    selectView(shadow, 'Cards');
+    assert.ok(shadow.querySelector('[aria-label="4 wheat cards"]'));
+    assert.equal(shadow.querySelector('.hand-total').textContent, '6 cards');
+  } finally { dom.window.close(); }
+});
+
+test("card view shows mystery cards and updates after purchase inference", async () => {
+  const dom = browser('<div id="game-log-text">' + [
+    'Alice rolled 8', 'Alice got 2 wood brick wheat', 'Bob got sheep ore', 'You stole a card from Bob'
+  ].map((text, i) => logRow(i, text)).join('') + '</div>');
+  try {
+    const shadow = trackerShadow(dom); selectView(shadow, 'Cards');
+    assert.ok(shadow.querySelector('[aria-label="1 unknown card"]'));
+    assert.equal(shadow.querySelector('.hand-total').textContent, '5 cards');
+    const next = dom.window.document.createElement('div'); next.dataset.index = '4'; next.textContent = 'Alice built a settlement';
+    dom.window.document.querySelector('#game-log-text').append(next); await delay();
+    const hand = shadow.querySelector('.hand-player');
+    assert.equal(hand.querySelector('[aria-label="1 unknown card"]'), null);
+    assert.ok(hand.querySelector('[aria-label="1 wood card"]'));
+    assert.equal(hand.querySelector('.hand-total').textContent, '1 card');
+  } finally { dom.window.close(); }
+});
+
+test("view preference survives refresh, applies to other games and can return to numeric", () => {
+  const store = savedGames(), html = '<div id="game-log-text">' + logRow(0, 'Alice got wood') + '</div>';
+  const original = browser(html, 'Alice', store);
+  selectView(trackerShadow(original), 'Cards'); original.window.close();
+  const refreshed = browser(html, null, store);
+  try { assert.equal(trackerShadow(refreshed).querySelector('#card-hands').hidden, false); }
+  finally { refreshed.window.close(); }
+  const other = browser(html, 'Alice', { ...store, url: 'https://colonist.io/#different' });
+  selectView(trackerShadow(other), 'Numeric'); other.window.close();
+  const returned = browser(html, null, store);
+  try {
+    assert.equal(trackerShadow(returned).querySelector('table').hidden, false);
+    assert.equal(trackerShadow(returned).querySelector('#card-hands').hidden, true);
+    assert.equal(trackerShadow(returned).querySelector('input[aria-label="Alice wood"]').value, '1');
+  } finally { returned.window.close(); }
+});
+
+test("card view reuses approved resource images and caps drawn stacks for large hands", () => {
+  const safe = 'https://cdn.colonist.io/dist/assets/card_lumber.fixture.svg';
+  const dom = browser(`<img src="${safe}"><img src="https://evil.invalid/card_ore.svg"><div id="game-log-text">${logRow(0, 'Alice got 999 wood ore')}</div>`);
+  try {
+    const shadow = trackerShadow(dom); selectView(shadow, 'Cards');
+    const stack = shadow.querySelector('[aria-label="999 wood cards"]');
+    assert.equal(stack.querySelector('.stack-count').textContent, '999');
+    assert.equal(stack.querySelectorAll('.hand-card').length, 6);
+    assert.ok([...stack.querySelectorAll('img')].every(img => img.src === safe));
+    assert.equal(shadow.querySelector('[aria-label="1 ore card"]').querySelector('img'), null);
+    assert.equal(shadow.querySelector('.hand-total').textContent, '1000 cards');
+  } finally { dom.window.close(); }
+});
 
 test("refresh restores hidden-card constraints, corrections, username and deduplication from a partial log", async () => {
   const store = savedGames();
@@ -556,6 +629,49 @@ test("typing in feed-like chat inputs while a resource arrives never creates a p
     assert.equal(shadow.querySelector('input[aria-label="Alice wood"]').value, '1');
     assert.equal(shadow.querySelector('input[aria-label="Alice brick"]').value, '1');
     assert.deepEqual([...dom.window.CatanTrackLog.read(doc).entries].map(row => row.dataset.index), ['0', '4']);
+  } finally { dom.window.close(); }
+});
+
+test("local thefts with a styled victim are retained and fund the next city", () => {
+  // The report lost rows immediately after local robber moves, then marked a
+  // city unaffordable. Reproduce the layout with both the style and name class
+  // variants; the report cannot recover which cards those omitted rows held.
+  const rows = [
+    'Moldrn received starting resources ore wheat',
+    'Moldrn rolled 7',
+    '<span style="font-weight:600;color:#228103">Bob</span> got ore ore',
+    'You stole <img alt="Ore"> from <span style="font-weight:600;color:#228103">Bob</span>',
+    'Moldrn got wheat',
+    'You stole <img alt="Ore"> from <span class="playerName-fixture">Bob</span>',
+    'Moldrn built a City <img alt="City"> (+1 VP)'
+  ];
+  const html = '<div class="virtualScroller-fixture">' + rows.map((body, index) =>
+    `<div class="scrollItemContainer-fixture" data-index="${index}"><div class="feedMessage-fixture"><span class="messagePart-fixture">${body}</span></div></div>`
+  ).join('') + '</div>';
+  const dom = browser(html, 'Moldrn');
+  try {
+    const shadow = trackerShadow(dom);
+    assert.equal(dom.window.CatanTrackLog.read(dom.window.document).entries.length, rows.length);
+    assert.equal(shadow.querySelector('input[aria-label="Moldrn ore"]').value, '0');
+    assert.equal(shadow.querySelector('input[aria-label="Moldrn wheat"]').value, '0');
+    assert.equal(shadow.querySelector('input[aria-label="Bob ore"]').value, '0');
+    assert.equal(shadow.querySelectorAll('.incomplete-flag').length, 0);
+  } finally { dom.window.close(); }
+});
+
+test("local hidden steals and trades with styled partners remain game events", () => {
+  const dom = browser('<div id="game-log-text">' + [
+    'Bob got wood ore',
+    'You stole <img alt="Card Back"> from <span style="font-weight:600">Bob</span>',
+    'You gave wood and got ore from <span class="username">Bob</span>'
+  ].map((body, index) => logRow(index, `<span class="messagePart-fixture">${body}</span>`)).join('') + '</div>');
+  try {
+    const shadow = trackerShadow(dom);
+    assert.equal(dom.window.CatanTrackLog.read(dom.window.document).entries.length, 3);
+    assert.equal(shadow.querySelector('input[aria-label="Alice ore"]').value, '1');
+    assert.equal(shadow.querySelector('input[aria-label="Bob wood"]').value, '1');
+    assert.equal(shadow.querySelector('[aria-label="Alice unknown cards"]').textContent, '0');
+    assert.equal(shadow.querySelectorAll('.incomplete-flag').length, 0);
   } finally { dom.window.close(); }
 });
 

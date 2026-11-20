@@ -8,6 +8,8 @@
   let localPlayer = "", journal = [];
   const storage = globalThis.chrome?.storage?.local;
   const storageKey = path => `catantrack:game:v1:${path}`;
+  const preferencesKey = "catantrack:preferences:v1";
+  let viewMode = "numeric", viewChosen = false;
   const retention = 48 * 60 * 60 * 1000;
   let storageReady = false, savedSignature = "";
   let colorsByName = new Map();
@@ -32,6 +34,8 @@
     button{font:inherit;cursor:pointer;border:1px solid #496252;border-radius:5px;background:#283f32;color:#eef5eb;padding:4px 7px}button:hover{background:#3a5542}button:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid #d4e98c;outline-offset:2px}
     .body{padding:4px 8px 6px}p{font-size:10px;color:#b9c9bd;line-height:1.45;margin:6px 0}.status{color:#b4cf92;margin:0 0 3px;font-size:9px}table{border-collapse:collapse;table-layout:fixed;width:100%;font-variant-numeric:tabular-nums}th{color:#b9c9bd;font-size:11px;font-weight:500;height:29px;padding:2px 0}th:first-child{width:25%;text-align:left}th:nth-last-child(-n+2){width:12%}td{height:27px;padding:2px 0;text-align:center;border-top:1px solid #344a3b}td:first-child{text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}td:last-child{font-size:10px}input{font:inherit;color:#eef5eb;text-align:center;width:26px;max-width:100%;background:transparent;border:1px solid transparent;border-radius:4px;padding:2px 0}input:hover{border-color:#57705c}input::-webkit-inner-spin-button{appearance:none}.resource-icon{display:inline-flex;align-items:center;justify-content:center;width:21px;height:24px;font-size:18px;vertical-align:middle}.resource-icon img{width:17px;height:24px;object-fit:contain}.uncertain{color:#f1c56c}.empty{padding:10px 4px;text-align:center;color:#b9c9bd;font-size:11px}.extras{max-height:40vh;overflow:auto;border-top:1px solid #344a3b;margin-top:5px;padding-top:4px}.tools{display:flex;gap:6px;margin-top:7px}.activity{overflow-wrap:anywhere;max-height:42px;overflow:auto}.legend{margin-top:2px}details{font-size:10px;color:#b9c9bd;margin-top:7px}summary{cursor:pointer}.log{max-height:80px;overflow:auto}.log p{margin:4px 0}
     .body{font-size:clamp(11px,3.5cqi,18px)}.body th{font-size:.9em;height:2.4em}.body td{height:2.25em}.body td:first-child{font-weight:600}.body td:last-child{font-size:.85em}.body input[type=number]{width:2.2em}.mystery{font-size:.85em}.resource-icon{width:1.8em;height:2em;font-size:1em}.resource-icon>span{font-size:1.5em}.resource-icon img{width:1.4em;height:2em}.incomplete-flag{color:#f1c56c}
+    .view-switch{display:flex;justify-content:flex-end;gap:3px;margin:4px 0 5px}.view-switch button{font-size:10px;padding:3px 8px;background:transparent;color:#b9c9bd}.view-switch button[aria-pressed=true]{background:#36533f;border-color:#8aa66b;color:#f1f6e7}
+    .hand-player{padding:6px 0 7px;border-top:1px solid #344a3b}.hand-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}.hand-name{font-size:1em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hand-total{font-size:.85em;color:#b9c9bd;white-space:nowrap}.hand-cards{display:flex;align-items:flex-end;flex-wrap:wrap;gap:8px 9px;padding:2px 3px 0}.card-stack{position:relative;flex:none;width:calc(2.1em + var(--spread));height:3.1em;font-size:clamp(11px,3.5cqi,18px)}.hand-card{position:absolute;left:var(--offset);bottom:0;width:2.1em;height:3em;border:1px solid #e1d1a0;border-radius:4px;background:var(--card-color);box-shadow:0 1px 3px #0007;overflow:hidden;display:flex;align-items:center;justify-content:center}.hand-card img{width:100%;height:100%;object-fit:fill}.card-symbol{font-size:1.4em;filter:drop-shadow(0 1px 1px #0003)}.hand-card.unknown-card{background:repeating-linear-gradient(135deg,#46586e 0 5px,#3b4b60 5px 10px);border-color:#aebbc9;color:#edf2fa}.hand-card.unknown-card .card-symbol{font-size:1.7em;font-weight:700}.stack-count{position:absolute;right:-3px;top:-5px;z-index:1;min-width:1.6em;padding:1px 4px;border-radius:4px;background:#283f66;border:1px solid #849ac0;color:white;text-align:center;font-size:.85em;font-weight:700;box-shadow:0 1px 3px #0005}.hand-empty{font-size:.85em;color:#8fa699;padding:6px 0}
   `;
   shadow.append(style);
   function el(tag, text, parent, className) {
@@ -44,7 +48,7 @@
   const panel = el("section", undefined, shadow, "panel");
   panel.setAttribute("aria-label", "CatanTracker resource tracker");
   const header = el("header", undefined, panel);
-  el("strong", "CatanTracker - Moldrn", header);
+  el("strong", "CatanTracker", header);
   const collapse = el("button", "−", header); collapse.title = "Collapse tracker";
   collapse.setAttribute("aria-expanded", "true");
   const more = el("button", "⋯", header);
@@ -66,7 +70,13 @@
   const cancelUsername = el("button", "Cancel", identityEntry); cancelUsername.type = "button"; cancelUsername.hidden = true;
   el("p", 'Enter your exact game name so "You" and "you" update your hand.', identityForm);
   const status = el("p", undefined, body, "status");
+  const viewSwitch = el("div", undefined, body, "view-switch");
+  viewSwitch.setAttribute("role", "group"); viewSwitch.setAttribute("aria-label", "Resource view");
+  const numericView = el("button", "Numeric", viewSwitch); numericView.type = "button";
+  const cardsView = el("button", "Cards", viewSwitch); cardsView.type = "button";
+  numericView.setAttribute("aria-controls", "numeric-hands"); cardsView.setAttribute("aria-controls", "card-hands");
   const table = el("table", undefined, body);
+  table.id = "numeric-hands";
   const tr = el("tr", undefined, el("thead", undefined, table));
   const icons = new Map();
   const fallbackIcons = { wood: "🌲", brick: "🧱", sheep: "🐑", wheat: "🌾", ore: "🪨" };
@@ -84,6 +94,8 @@
     } else th.textContent = label === "Unknown" ? "?" : label === "Total" ? "Σ" : label;
   }
   const tbody = el("tbody", undefined, table);
+  const cardHands = el("div", undefined, body, "card-hands"); cardHands.id = "card-hands";
+  cardHands.setAttribute("aria-label", "Player resource cards");
   const empty = el("div", "Start a game with the English game log open.", body, "empty");
   const extras = el("div", undefined, body, "extras"); extras.id = "tracker-controls"; extras.hidden = true;
   const identityInfo = el("div", undefined, extras, "identity-info");
@@ -111,12 +123,72 @@
   el("summary", "Game log diagnostics", diagnostics);
   const diagnosticText = el("pre", undefined, diagnostics);
   diagnosticText.style.cssText = "white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto;user-select:text;font-size:10px";
+  el("p", "Made by Moldrn", extras);
   const recent = [];
+  function chooseView(mode) {
+    viewMode = mode; viewChosen = true;
+    render();
+    if (storage) try {
+      storage.set({ [preferencesKey]: { view: viewMode } }, () => {
+        if (globalThis.chrome?.runtime?.lastError) saveStatus.textContent = "View changed for this tab; couldn't save the preference.";
+      });
+    } catch { saveStatus.textContent = "View changed for this tab; couldn't save the preference."; }
+  }
+  numericView.addEventListener("click", () => chooseView("numeric"));
+  cardsView.addEventListener("click", () => chooseView("cards"));
+  function playerColor(player) {
+    const matches = [...colorsByName].filter(([rawName]) => tracker.resolveName(rawName) === player.name);
+    return matches.find(([rawName]) => !/^you$/i.test(rawName))?.[1] || matches[0]?.[1];
+  }
+  function totalCards(player) {
+    return player.totalMin === player.totalMax ? String(player.totalMin) : `${player.totalMin}–${player.totalMax}`;
+  }
+  function renderCardHand(player) {
+    const section = el("section", undefined, cardHands, "hand-player");
+    section.setAttribute("aria-label", `${player.name}'s cards`);
+    const heading = el("div", undefined, section, "hand-heading");
+    const name = el("strong", player.name, heading, "hand-name");
+    const color = playerColor(player); if (color) name.style.color = color;
+    if (player.incomplete) { el("span", " !", name, "incomplete-flag"); name.title = "Missing or unsupported information: these counts may be incomplete."; }
+    el("span", `${totalCards(player)} ${player.totalMin === 1 && player.totalMax === 1 ? "card" : "cards"}`, heading, "hand-total");
+    const hand = el("div", undefined, section, "hand-cards");
+    const colors = { wood: "#499437", brick: "#b8674c", sheep: "#a2c956", wheat: "#d9ae44", ore: "#80a99e", unknown: "#46586e" };
+    for (const resource of [...RESOURCES, "unknown"]) {
+      const count = resource === "unknown" ? player.unknown : player.resources[resource];
+      if (!count) continue;
+      const stack = el("div", undefined, hand, "card-stack");
+      const label = resource === "unknown" ? "unknown" : resource;
+      stack.setAttribute("role", "img"); stack.setAttribute("aria-label", `${count} ${label} card${count === 1 ? "" : "s"}`);
+      stack.title = resource === "unknown" ? `${count} unknown cards. Possible types: ${RESOURCES.filter(r => player.maximum[r] > player.resources[r]).join(", ")}.` : `${count} guaranteed ${resource} card${count === 1 ? "" : "s"}`;
+      const visible = Math.min(count, 6);
+      stack.style.setProperty("--spread", `${(visible - 1) * 4}px`);
+      stack.style.setProperty("--card-color", colors[resource]);
+      const src = icons.get(resource)?.getAttribute("src");
+      for (let i = 0; i < visible; i++) {
+        const card = el("span", undefined, stack, `hand-card${resource === "unknown" ? " unknown-card" : ""}`);
+        card.setAttribute("aria-hidden", "true"); card.style.setProperty("--offset", `${i * 4}px`);
+        const symbol = el("span", resource === "unknown" ? "?" : fallbackIcons[resource], card, "card-symbol");
+        if (src) {
+          const image = el("img", undefined, card); image.alt = ""; image.referrerPolicy = "no-referrer";
+          image.hidden = true;
+          image.addEventListener("load", () => { image.hidden = false; symbol.hidden = true; });
+          image.addEventListener("error", () => { image.hidden = true; symbol.hidden = false; });
+          image.src = src;
+        }
+      }
+      el("span", String(count), stack, "stack-count").setAttribute("aria-hidden", "true");
+    }
+    if (!hand.childElementCount) el("span", "No tracked cards", hand, "hand-empty");
+  }
   function render() {
     status.textContent = rowCount ? tracker.events ? `${tracker.players.size} players · ${tracker.events} events${baseline ? " · counts cleared" : ""}` : `Game log found · ${rowCount} rows · no recognized events yet` : logInfo.containers ? "Game log found · waiting for entries…" : "Game log not found · see ⋯ → Game log diagnostics";
     if (!rowCount && tracker.events) status.textContent = `${tracker.players.size} players · ${tracker.events} events · waiting for game log`;
     if (!localPlayer) status.textContent = "Enter your username above to start tracking.";
-    table.hidden = !localPlayer;
+    table.hidden = !localPlayer || viewMode !== "numeric";
+    cardHands.hidden = !localPlayer || viewMode !== "cards";
+    viewSwitch.hidden = !localPlayer;
+    numericView.setAttribute("aria-pressed", String(viewMode === "numeric"));
+    cardsView.setAttribute("aria-pressed", String(viewMode === "cards"));
     identityInfo.hidden = !localPlayer;
     identityName.textContent = localPlayer ? `Playing as ${localPlayer}` : "";
     suggestions.replaceChildren();
@@ -124,11 +196,12 @@
     activity.textContent = lastEvent;
     empty.hidden = !localPlayer || tracker.players.size > 0;
     tbody.replaceChildren();
+    cardHands.replaceChildren();
     for (const player of tracker.players.values()) {
+      if (viewMode === "cards") renderCardHand(player);
       const row = el("tr", undefined, tbody);
       const name = el("td", player.name, row, player.uncertain ? "uncertain" : "");
-      const matches = [...colorsByName].filter(([rawName]) => tracker.resolveName(rawName) === player.name);
-      const color = matches.find(([rawName]) => !/^you$/i.test(rawName))?.[1] || matches[0]?.[1];
+      const color = playerColor(player);
       if (color) name.style.color = color;
       if (player.incomplete) el("span", " !", name, "incomplete-flag");
       name.title = player.incomplete ? "Missing or unsupported information: these counts may be incomplete." : player.name;
@@ -154,13 +227,13 @@
         const possible = RESOURCES.filter(r => player.maximum[r] > player.resources[r]);
         card.title = `Unresolved cards. Possible types: ${possible.join(", ")}.${tracker.inferenceLimited ? " Using conservative inference after many hidden transfers." : ""}`;
       } else unknown.textContent = "0";
-      const total = player.totalMin === player.totalMax ? String(player.totalMin) : `${player.totalMin}–${player.totalMax}`;
+      const total = totalCards(player);
       el("td", total + (player.incomplete ? " !" : ""), row);
     }
     history.replaceChildren();
     recent.forEach(text => el("p", text, history));
     diagnosticText.textContent = [
-      "CatanTracker 0.4.0", `Reader: ${logInfo.mode}`, `Local player: ${localPlayer || "not set"}`,
+      "CatanTracker 0.5.0", `Reader: ${logInfo.mode}`, `Local player: ${localPlayer || "not set"}`,
       `Log containers: ${logInfo.containers}; virtual scrollers: ${logInfo.virtualCandidates}; rows: ${rowCount}; events: ${tracker.events}`,
       ...logInfo.entries.slice(-3).map(row => `Message: ${messageText(row)}\nHTML: ${diagnosticHtml(row).slice(0, 2500)}`),
       !rowCount ? "DOM hints: " + [...document.querySelectorAll('[class*="scroll" i], [class*="feed" i], [id*="log" i], [class*="log" i]')].filter(node => node !== host).slice(0, 25).map(node => `${node.tagName.toLowerCase()}#${node.id}.${String(node.className).replace(/\s+/g, ".")}`).join("\n") : ""
@@ -168,7 +241,7 @@
   }
   exportReport.addEventListener("click", () => {
     const report = {
-      version: "0.4.0", exportedAt: new Date().toISOString(), room: location.pathname + location.hash, localPlayer,
+      version: "0.5.0", exportedAt: new Date().toISOString(), room: location.pathname + location.hash, localPlayer,
       coverage: { firstObservedIndex, retainedRows: observedRows.size, captureTruncated, countsCleared: baseline },
       reader: { mode: logInfo.mode, containers: logInfo.containers, visibleRows: rowCount },
       eventsApplied: tracker.events, inferenceLimited: tracker.inferenceLimited,
@@ -271,6 +344,7 @@
     // Reuse resource-card images already present in the game. No external asset
     // lookup or extension-hosted images are needed; emoji remain as fallbacks.
     const matched = new Set();
+    let changed = false;
     for (const image of document.querySelectorAll('img[src*="card_"]')) {
       const url = resourceImageUrl(image.currentSrc || image.getAttribute("src"), document.baseURI);
       if (!url) continue;
@@ -278,8 +352,9 @@
       const icon = icons.get(resource);
       if (matched.has(resource)) continue;
       matched.add(resource);
-      if (icon && icon.getAttribute("src") !== url) icon.src = url;
+      if (icon && icon.getAttribute("src") !== url) { icon.src = url; changed = true; }
     }
+    return changed;
   }
   function scan() {
     timer = undefined;
@@ -295,11 +370,11 @@
     if (!storageReady) return;
     const previousMode = logInfo.mode;
     logInfo = readLog(document);
-    refreshResourceIcons();
+    const iconsChanged = refreshResourceIcons();
     const entries = logInfo.entries, occurrences = new Map();
     const previousCount = rowCount;
     rowCount = entries.length;
-    let changed = previousCount !== rowCount || previousMode !== logInfo.mode;
+    let changed = previousCount !== rowCount || previousMode !== logInfo.mode || iconsChanged;
     for (const row of entries) {
       for (const { name, color } of playerColors(row)) if (colorsByName.get(name) !== color) { colorsByName.set(name, color); changed = true; }
       const text = messageText(row);
@@ -384,5 +459,11 @@
   // Navigation and log replacement may happen without an immediate row mutation.
   setInterval(schedule, 2000);
   window.addEventListener("pagehide", saveState);
+  if (storage) try {
+    storage.get(preferencesKey, result => {
+      if (globalThis.chrome?.runtime?.lastError || viewChosen) return;
+      if (result?.[preferencesKey]?.view === "cards") { viewMode = "cards"; render(); }
+    });
+  } catch { /* Keep the default numeric view if preferences are unavailable. */ }
   render(); loadState();
 })();

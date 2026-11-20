@@ -58,12 +58,17 @@
     const text = messageText(row);
     if (name) {
       const sender = name.textContent.trim();
-      const prefix = text.slice(0, sender.length);
-      if (prefix === sender && /^\s*[:：]/.test(text.slice(sender.length))) return true;
-      // The actor must be the rendered sender, rather than an action word
-      // found later inside that sender's chat message (or their username).
-      const event = api().parse(text);
-      if (event?.player && event.player !== sender) return true;
+      const beforeName = node.ownerDocument.createRange();
+      beforeName.selectNodeContents(node);
+      beforeName.setEndBefore(name);
+      // Only a name at the start of the message identifies its sender.
+      // In "You stole ... from Bob", the first styled name is the victim.
+      // Trades can likewise style only the partner after an unstyled "You".
+      if (!beforeName.toString().trim()) {
+        if (/^\s*[:：]/.test(text.slice(sender.length))) return true;
+        const event = api().parse(text);
+        if (event?.player && event.player !== sender) return true;
+      }
     }
     // Some chat layouts render the author outside messagePart, or without a
     // styled span. A colon before the action still identifies a chat prefix.
