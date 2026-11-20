@@ -98,8 +98,143 @@ test("DOM parser reads image alt text and filenames", () => {
 });
 
 const delay = () => new Promise(resolve => setTimeout(resolve, 200));
-function browser(html, username = "Alice") {
-  const dom = new JSDOM(html, { url: "https://colonist.io/#room", runScripts: "outside-only", pretendToBeVisual: true });
+function savedGames() {
+  const data = {};
+  const chrome = { runtime: {}, storage: { local: {
+    get(key, callback) { callback(structuredClone({ [key]: data[key] })); },
+    set(values, callback) { Object.assign(data, structuredClone(values)); callback(); }
+  } } };
+  return { data, chrome };
+}
+const trackerShadow = dom => dom.window.document.querySelector('#catantrack-extension').shadowRoot;
+const logRow = (index, text) => `<div data-index="${index}">${text}</div>`;
+
+test("refresh restores hidden-card constraints, corrections, username and deduplication from a partial log", async () => {
+  const store = savedGames();
+  const original = browser('<div id="game-log-text">' + [
+    logRow(0, 'Alice rolled 8'), logRow(1, 'Bob got wood sheep'),
+    logRow(2, 'You got 2 wood brick wheat'), logRow(3, 'You stole a card from Bob')
+  ].join('') + '</div>', 'Alice', store);
+  const correction = trackerShadow(original).querySelector('input[aria-label="Alice ore"]');
+  correction.value = '2'; correction.dispatchEvent(new original.window.Event('change'));
+  assert.match(trackerShadow(original).querySelector('[aria-label="Alice unknown cards"]').textContent, /1/);
+  original.window.close();
+  const refreshed = browser('<div id="game-log-text">' + logRow(3, 'You stole a card from Bob') + '</div>', null, store);
+  try {
+    const shadow = trackerShadow(refreshed);
+    assert.equal(shadow.querySelector('form').hidden, true);
+    assert.equal(shadow.querySelector('input[aria-label="Alice wood"]').value, '2');
+    assert.equal(shadow.querySelector('input[aria-label="Alice ore"]').value, '2');
+    assert.match(shadow.querySelector('[aria-label="Alice unknown cards"]').textContent, /1/);
+    const next = refreshed.window.document.createElement('div');
+    next.dataset.index = '4'; next.textContent = 'Alice built a settlement';
+    refreshed.window.document.querySelector('#game-log-text').append(next);
+    await delay();
+    assert.equal(shadow.querySelector('input[aria-label="Alice wood"]').value, '1');
+    assert.equal(shadow.querySelector('[aria-label="Alice unknown cards"]').textContent, '0');
+    assert.equal(shadow.querySelector('input[aria-label="Bob wood"]').value, '1');
+    assert.equal(shadow.querySelector('input[aria-label="Bob sheep"]').value, '0');
+  } finally { refreshed.window.close(); }
+});
+
+test("cleared counts stay cleared across refresh and only new events are counted", () => {
+  const store = savedGames();
+  const html = '<div id="game-log-text">' + logRow(0, 'Alice got 3 wood') + '</div>';
+  const original = browser(html, 'Alice', store);
+  [...trackerShadow(original).querySelectorAll('button')].find(b => b.textContent === 'Clear counts').click();
+  original.window.close();
+  const refreshed = browser(html.replace('</div></div>', '</div>' + logRow(1, 'Alice got brick') + '</div>'), null, store);
+  try {
+    assert.equal(trackerShadow(refreshed).querySelector('input[aria-label="Alice wood"]').value, '0');
+    assert.equal(trackerShadow(refreshed).querySelector('input[aria-label="Alice brick"]').value, '1');
+  } finally { refreshed.window.close(); }
+});
+
+test("refresh preserves a pending Monopoly and player colors before the log loads", async () => {
+  const store = savedGames();
+  const original = browser('<div id="game-log-text">' + [
+    logRow(0, '<span class="messagePart-fixture"><span style="font-weight:600;color:#228103">Bob</span> got 3 wood</span>'),
+    logRow(1, 'You played Monopoly')
+  ].join('') + '</div>', 'Alice', store);
+  original.window.close();
+  const refreshed = browser('<div id="game-log-text"></div>', null, store);
+  try {
+    const shadow = trackerShadow(refreshed);
+    assert.match(shadow.querySelector('.status').textContent, /2 players/);
+    assert.equal(shadow.querySelector('tbody td').style.color, 'rgb(34, 129, 3)');
+    const row = refreshed.window.document.createElement('div');
+    row.dataset.index = '2'; row.textContent = 'You got 3 wood';
+    refreshed.window.document.querySelector('#game-log-text').append(row); await delay();
+    assert.equal(shadow.querySelector('input[aria-label="Alice wood"]').value, '3');
+    assert.equal(shadow.querySelector('input[aria-label="Bob wood"]').value, '0');
+  } finally { refreshed.window.close(); }
+});
+
+test("saved hands are isolated by game and return on navigation to the previous game", async () => {
+  const store = savedGames();
+  const dom = browser('<div id="game-log-text">' + logRow(0, 'Alice got wood') + '</div>', 'Alice', store);
+  try {
+    const log = dom.window.document.querySelector('#game-log-text');
+    dom.window.history.pushState({}, '', '/#another-game');
+    log.innerHTML = logRow(0, 'Bob got brick');
+    await delay();
+    assert.equal(trackerShadow(dom).querySelector('input[aria-label="Alice wood"]'), null);
+    assert.equal(trackerShadow(dom).querySelector('input[aria-label="Bob brick"]').value, '1');
+    dom.window.history.pushState({}, '', '/#room');
+    log.replaceChildren(); await delay();
+    assert.equal(trackerShadow(dom).querySelector('input[aria-label="Alice wood"]').value, '1');
+    assert.equal(trackerShadow(dom).querySelector('input[aria-label="Bob brick"]'), null);
+  } finally { dom.window.close(); }
+});
+
+test("an asynchronous restore waits before applying visible events", async () => {
+  const store = savedGames();
+  const html = '<div id="game-log-text">' + logRow(0, 'Alice got wood') + '</div>';
+  const original = browser(html, 'Alice', store); original.window.close();
+  const get = store.chrome.storage.local.get;
+  store.chrome.storage.local.get = (key, callback) => setTimeout(() => get(key, callback), 30);
+  const refreshed = browser(html.replace('</div></div>', '</div>' + logRow(1, 'Alice got brick') + '</div>'), null, store);
+  try {
+    assert.equal(trackerShadow(refreshed).querySelectorAll('tbody tr').length, 0);
+    await delay();
+    assert.equal(trackerShadow(refreshed).querySelector('input[aria-label="Alice wood"]').value, '1');
+    assert.equal(trackerShadow(refreshed).querySelector('input[aria-label="Alice brick"]').value, '1');
+  } finally { refreshed.window.close(); }
+});
+
+test("expired or malformed saved data falls back to available log entries", () => {
+  for (const invalid of [
+    { schema: 1, savedAt: Date.now() - 49 * 60 * 60 * 1000, localPlayer: 'Old', journal: [], seen: ['index:0'], colors: [] },
+    { schema: 1, savedAt: Date.now(), localPlayer: 'Old', journal: [null], seen: [], colors: [] }
+  ]) {
+    const store = savedGames(); store.data['catantrack:game:v1:/#room'] = invalid;
+    const dom = browser('<div id="game-log-text">' + logRow(0, 'Alice got wood') + '</div>', 'Alice', store);
+    try {
+      assert.equal(trackerShadow(dom).querySelectorAll('tbody tr').length, 1);
+      assert.equal(trackerShadow(dom).querySelector('input[aria-label="Alice wood"]').value, '1');
+    } finally { dom.window.close(); }
+  }
+});
+
+test("failed saves show a warning and retry without interrupting resource tracking", async () => {
+  const store = savedGames(); let attempts = 0;
+  store.chrome.storage.local.set = (values, callback) => {
+    attempts++; store.chrome.runtime.lastError = { message: 'Quota exceeded' };
+    callback(); delete store.chrome.runtime.lastError;
+  };
+  const dom = browser('<div id="game-log-text">' + logRow(0, 'Alice got wood') + '</div>', 'Alice', store);
+  try {
+    assert.match(trackerShadow(dom).querySelector('[role="status"]').textContent, /Couldn't save/);
+    const previous = attempts;
+    const row = dom.window.document.createElement('div'); row.dataset.index = '1'; row.textContent = 'Alice got brick';
+    dom.window.document.querySelector('#game-log-text').append(row); await delay();
+    assert.ok(attempts > previous);
+    assert.equal(trackerShadow(dom).querySelector('input[aria-label="Alice brick"]').value, '1');
+  } finally { dom.window.close(); }
+});
+function browser(html, username = "Alice", options = {}) {
+  const dom = new JSDOM(html, { url: options.url || "https://colonist.io/#room", runScripts: "outside-only", pretendToBeVisual: true });
+  if (options.chrome) dom.window.chrome = options.chrome;
   for (const file of ["tracker.js", "log-reader.js", "content.js"]) dom.window.eval(fs.readFileSync(path.join(__dirname, "../extension", file), "utf8"));
   if (username !== null) {
     const shadow = dom.window.document.querySelector("#catantrack-extension").shadowRoot;

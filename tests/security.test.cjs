@@ -77,7 +77,7 @@ test("manifest limits injection to Colonist hosts and keeps packaged scripts iso
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../extension/manifest.json"), "utf8"));
   assert.deepEqual(manifest.content_scripts[0].matches, ["https://colonist.io/*", "https://www.colonist.io/*"]);
   assert.notEqual(manifest.content_scripts[0].world, "MAIN");
-  assert.equal(manifest.permissions, undefined);
+  assert.deepEqual(manifest.permissions, ["storage"]);
   assert.equal(manifest.externally_connectable, undefined);
   assert.equal(manifest.web_accessible_resources, undefined);
   assert.doesNotMatch(manifest.content_security_policy.extension_pages, /unsafe-eval|unsafe-inline|https?:/);

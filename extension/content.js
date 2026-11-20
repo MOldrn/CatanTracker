@@ -6,6 +6,10 @@
   const pageKey = () => location.pathname + location.search + location.hash;
   let tracker = new Tracker(), seen = new Set(), lastPath = pageKey();
   let localPlayer = "", journal = [];
+  const storage = globalThis.chrome?.storage?.local;
+  const storageKey = path => `catantrack:game:v1:${path}`;
+  const retention = 48 * 60 * 60 * 1000;
+  let storageReady = false, savedSignature = "";
   let colorsByName = new Map();
   let observedRows = new Map(), captureTruncated = false, firstObservedIndex = null;
   let lastEvent = "Waiting for a game log…", timer, rowCount = 0, baseline = false;
@@ -38,9 +42,9 @@
     return node;
   }
   const panel = el("section", undefined, shadow, "panel");
-  panel.setAttribute("aria-label", "CatanTrack resource tracker");
+  panel.setAttribute("aria-label", "CatanTracker resource tracker");
   const header = el("header", undefined, panel);
-  el("strong", "CatanTrack", header);
+  el("strong", "CatanTracker - Moldrn", header);
   const collapse = el("button", "−", header); collapse.title = "Collapse tracker";
   collapse.setAttribute("aria-expanded", "true");
   const more = el("button", "⋯", header);
@@ -89,6 +93,8 @@
   const resetSize = el("button", "Reset panel size", extras);
   resetSize.addEventListener("click", () => { panel.style.removeProperty("width"); panel.style.removeProperty("height"); keepInViewport(); });
   const activity = el("p", undefined, extras, "activity");
+  const saveStatus = el("p", "Game progress is saved locally. Saves from the last 48 hours restore after a refresh.", extras);
+  saveStatus.setAttribute("role", "status");
   const tools = el("div", undefined, extras, "tools");
   const reset = el("button", "Clear counts", tools);
   reset.title = "Clear counts and track only future log entries";
@@ -108,6 +114,7 @@
   const recent = [];
   function render() {
     status.textContent = rowCount ? tracker.events ? `${tracker.players.size} players · ${tracker.events} events${baseline ? " · counts cleared" : ""}` : `Game log found · ${rowCount} rows · no recognized events yet` : logInfo.containers ? "Game log found · waiting for entries…" : "Game log not found · see ⋯ → Game log diagnostics";
+    if (!rowCount && tracker.events) status.textContent = `${tracker.players.size} players · ${tracker.events} events · waiting for game log`;
     if (!localPlayer) status.textContent = "Enter your username above to start tracking.";
     table.hidden = !localPlayer;
     identityInfo.hidden = !localPlayer;
@@ -135,6 +142,7 @@
           if (input.value.trim() && Number.isInteger(value) && value >= 0 && value <= 999) {
             journal.push({ kind: "correction", player: player.name === localPlayer ? "You" : player.name, resource, delta: value - player.resources[resource] });
             tracker.setCount(player.name, resource, value);
+            saveState();
           }
           render();
         });
@@ -152,7 +160,7 @@
     history.replaceChildren();
     recent.forEach(text => el("p", text, history));
     diagnosticText.textContent = [
-      "CatanTrack 0.4.0", `Reader: ${logInfo.mode}`, `Local player: ${localPlayer || "not set"}`,
+      "CatanTracker 0.4.0", `Reader: ${logInfo.mode}`, `Local player: ${localPlayer || "not set"}`,
       `Log containers: ${logInfo.containers}; virtual scrollers: ${logInfo.virtualCandidates}; rows: ${rowCount}; events: ${tracker.events}`,
       ...logInfo.entries.slice(-3).map(row => `Message: ${messageText(row)}\nHTML: ${diagnosticHtml(row).slice(0, 2500)}`),
       !rowCount ? "DOM hints: " + [...document.querySelectorAll('[class*="scroll" i], [class*="feed" i], [id*="log" i], [class*="log" i]')].filter(node => node !== host).slice(0, 25).map(node => `${node.tagName.toLowerCase()}#${node.id}.${String(node.className).replace(/\s+/g, ".")}`).join("\n") : ""
@@ -185,6 +193,66 @@
       tracker.setCount(entry.player, entry.resource, Math.max(0, Math.min(999, value)));
     }
   }
+  function saveState() {
+    if (!storageReady || !storage) return;
+    const path = lastPath;
+    const state = { schema: 1, localPlayer, journal, seen: [...seen], baseline, colors: [...colorsByName] };
+    const signature = JSON.stringify(state);
+    if (signature === savedSignature) return;
+    try {
+      savedSignature = signature;
+      storage.set({ [storageKey(path)]: { ...JSON.parse(signature), savedAt: Date.now() } }, () => {
+        const error = globalThis.chrome?.runtime?.lastError;
+        if (path !== lastPath) return;
+        if (error) {
+          savedSignature = "";
+          saveStatus.textContent = "Couldn't save progress. Keep this tab open; refreshing may lose counts.";
+        } else {
+          saveStatus.textContent = "Game progress saved locally. Refreshing this game within 48 hours will restore it.";
+        }
+      });
+    } catch {
+      savedSignature = "";
+      saveStatus.textContent = "Couldn't save progress. Reload the extension if it was updated.";
+    }
+  }
+  function loadState() {
+    storageReady = false; savedSignature = "";
+    reset.disabled = true; replay.disabled = true;
+    const path = lastPath;
+    const finish = result => {
+      const error = globalThis.chrome?.runtime?.lastError;
+      if (path !== lastPath) return;
+      const state = !error && result?.[storageKey(path)];
+      if (state?.schema === 1 && Number.isFinite(state.savedAt) && Date.now() - state.savedAt < retention &&
+          typeof state.localPlayer === "string" && state.localPlayer.length <= 100 &&
+          Array.isArray(state.journal) && Array.isArray(state.seen) && Array.isArray(state.colors) &&
+          state.seen.every(key => typeof key === "string")) {
+        try {
+          localPlayer = state.localPlayer;
+          journal = state.journal; seen = new Set(state.seen); baseline = state.baseline === true;
+          colorsByName = new Map(state.colors);
+          rebuildForUsername();
+          recent.push(...journal.filter(entry => entry.kind !== "correction").slice(-8).reverse().map(entry => entry.text));
+          lastEvent = "Restored saved game progress. Continuing from new log entries.";
+          username.value = localPlayer;
+          identityForm.hidden = Boolean(localPlayer); cancelUsername.hidden = !localPlayer; saveUsername.textContent = localPlayer ? "Save" : "Start tracking";
+        } catch {
+          tracker = new Tracker(); localPlayer = ""; journal = []; seen.clear(); baseline = false; colorsByName.clear(); recent.length = 0;
+          lastEvent = "Saved progress couldn't be restored. Rebuilding from the available log.";
+        }
+      }
+      storageReady = true;
+      username.disabled = false; saveUsername.disabled = false;
+      reset.disabled = false; replay.disabled = false;
+      if (error) saveStatus.textContent = "Couldn't read saved progress. Rebuilding from the available log.";
+      render(); scan();
+    };
+    username.disabled = true; saveUsername.disabled = true;
+    if (!storage) { finish(); return; }
+    try { storage.get(storageKey(path), finish); }
+    catch { finish(); }
+  }
   username.addEventListener("input", () => username.setCustomValidity(""));
   identityForm.addEventListener("submit", event => {
     event.preventDefault();
@@ -193,7 +261,7 @@
     localPlayer = name;
     username.value = name; username.setCustomValidity("");
     identityForm.hidden = true; cancelUsername.hidden = false; saveUsername.textContent = "Save";
-    rebuildForUsername(); render();
+    rebuildForUsername(); saveState(); render();
   });
   changeUsername.addEventListener("click", () => {
     identityForm.hidden = false; username.value = localPlayer; username.focus(); username.select();
@@ -217,11 +285,14 @@
     timer = undefined;
     const path = pageKey();
     if (path !== lastPath) {
+      saveState();
       lastPath = path; tracker = new Tracker({ localPlayer }); journal = []; seen.clear(); recent.length = 0; baseline = false;
       colorsByName = new Map();
       observedRows = new Map(); captureTruncated = false; firstObservedIndex = null;
       lastEvent = "New page — rebuilding from available game log.";
+      loadState(); return;
     }
+    if (!storageReady) return;
     const previousMode = logInfo.mode;
     logInfo = readLog(document);
     refreshResourceIcons();
@@ -254,11 +325,13 @@
       }
     }
     // Avoid destroying a count field while the user is typing.
+    saveState();
     if ((changed || diagnostics.open) && shadow.activeElement?.tagName !== "INPUT") render();
   }
   function schedule() { if (!timer) timer = setTimeout(scan, 120); }
   reset.addEventListener("click", () => {
     tracker = new Tracker({ localPlayer }); journal = []; tracker.started = true; baseline = true; recent.length = 0;
+    saveState();
     lastEvent = "Counts cleared. Tracking future entries only; enter existing hands manually."; render();
   });
   replay.addEventListener("click", () => {
@@ -310,5 +383,6 @@
   new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["alt", "src", "data-index"] });
   // Navigation and log replacement may happen without an immediate row mutation.
   setInterval(schedule, 2000);
-  render(); scan();
+  window.addEventListener("pagehide", saveState);
+  render(); loadState();
 })();
