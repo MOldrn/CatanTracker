@@ -116,8 +116,8 @@ test("card view groups guaranteed resources and keeps numeric counts when switch
   ].map((text, i) => logRow(i, text)).join('') + '</div>');
   try {
     const shadow = trackerShadow(dom);
-    assert.equal(shadow.querySelector('table').hidden, false);
-    selectView(shadow, 'Cards');
+    assert.equal(shadow.querySelector('.view-switch button').textContent, 'Cards');
+    assert.equal(shadow.querySelector('.view-switch button').getAttribute('aria-pressed'), 'true');
     assert.equal(shadow.querySelector('table').hidden, true);
     assert.equal(shadow.querySelector('#card-hands').hidden, false);
     assert.equal(shadow.querySelectorAll('.hand-player').length, 2);
@@ -740,7 +740,8 @@ test("startup requests a username and replays events received before it was ente
     input.value = " Dalila7782 "; input.dispatchEvent(new dom.window.Event("input"));
     form.dispatchEvent(new dom.window.Event("submit", { cancelable: true }));
     assert.equal(form.hidden, true);
-    assert.equal(shadow.querySelector("table").hidden, false);
+    assert.equal(shadow.querySelector("table").hidden, true);
+    assert.equal(shadow.querySelector("#card-hands").hidden, false);
     assert.equal(shadow.querySelectorAll("tbody tr").length, 2);
     assert.equal(shadow.querySelector("tbody td").textContent, "Dalila7782");
     assert.equal(shadow.querySelector('input[aria-label="Dalila7782 wood"]').value, "1");

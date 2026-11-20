@@ -10,7 +10,7 @@ A Chrome extension that tracks each player's resources on [Colonist.io](https://
 - Links `You` in the log to your entered username.
 - Saves each game's progress locally and restores it after a refresh, including unknown cards and manual corrections. Saves from the last 48 hours can be restored.
 - Resizable, draggable panel with resource icons, game-colored player names, and editable counts.
-- Choose **Numeric** counters or **Cards** with overlapping resource cards. Your view preference is remembered across games.
+- Opens in **Cards** view with overlapping resource cards. Switch to **Numeric** for counters and manual edits. Your view preference is remembered across games.
 
 ## Installation
 

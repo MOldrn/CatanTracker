@@ -9,7 +9,7 @@
   const storage = globalThis.chrome?.storage?.local;
   const storageKey = path => `catantrack:game:v1:${path}`;
   const preferencesKey = "catantrack:preferences:v1";
-  let viewMode = "numeric", viewChosen = false;
+  let viewMode = "cards", viewChosen = false;
   const retention = 48 * 60 * 60 * 1000;
   let storageReady = false, savedSignature = "";
   let colorsByName = new Map();
@@ -72,8 +72,8 @@
   const status = el("p", undefined, body, "status");
   const viewSwitch = el("div", undefined, body, "view-switch");
   viewSwitch.setAttribute("role", "group"); viewSwitch.setAttribute("aria-label", "Resource view");
-  const numericView = el("button", "Numeric", viewSwitch); numericView.type = "button";
   const cardsView = el("button", "Cards", viewSwitch); cardsView.type = "button";
+  const numericView = el("button", "Numeric", viewSwitch); numericView.type = "button";
   numericView.setAttribute("aria-controls", "numeric-hands"); cardsView.setAttribute("aria-controls", "card-hands");
   const table = el("table", undefined, body);
   table.id = "numeric-hands";
@@ -462,8 +462,8 @@
   if (storage) try {
     storage.get(preferencesKey, result => {
       if (globalThis.chrome?.runtime?.lastError || viewChosen) return;
-      if (result?.[preferencesKey]?.view === "cards") { viewMode = "cards"; render(); }
+      if (["cards", "numeric"].includes(result?.[preferencesKey]?.view)) { viewMode = result[preferencesKey].view; render(); }
     });
-  } catch { /* Keep the default numeric view if preferences are unavailable. */ }
+  } catch { /* Keep the default card view if preferences are unavailable. */ }
   render(); loadState();
 })();
